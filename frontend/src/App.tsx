@@ -30,28 +30,32 @@ export default function App() {
   const openRun = useCallback((runId: string) => navigate({ name: "run", runId }), []);
   const goHome = useCallback(() => navigate({ name: "home" }), []);
 
+  const isRun = route.name === "run";
+
   return (
     <Shell route={route}>
-      {provider === "mock" && route.name !== "wizard" && (
-        <div
-          className="mx-6 mt-4 rounded-md px-3 py-2 text-xs"
-          style={{ background: "var(--warn-soft)", border: "1px solid var(--warn-line)", color: "var(--warn-fg)" }}
-        >
-          Running on the <strong>mock provider</strong> — agents post synthetic template text. Pick a real
-          provider and paste an API key in Settings to get LLM-written posts.
+      {provider === "mock" && route.name !== "wizard" && !isRun && (
+        <div className="banner banner-warn mx-4 mt-4 md:mx-8" style={{ alignItems: "flex-start" }}>
+          <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden style={{ color: "var(--warn)", marginTop: 1 }}>
+            <path d="M8 2 14.5 13.5h-13z" /><path d="M8 6.5V9M8 11.5v.01" />
+          </svg>
+          <span>
+            Running on the <strong>mock provider</strong> — agents post synthetic template text. Pick a real
+            provider and paste an API key in <a className="kbd-link" href="#/settings">Settings</a> to get LLM-written posts.
+          </span>
         </div>
       )}
 
       {!serverUp && (
-        <div
-          className="mx-6 mt-4 rounded-md px-3 py-2 text-xs"
-          style={{ background: "var(--err-soft)", border: "1px solid var(--err-line)", color: "var(--err-fg)" }}
-        >
-          Backend unreachable — is the server running on http://127.0.0.1:8000?
+        <div className="banner banner-err mx-4 mt-4 md:mx-8">
+          <span>
+            Backend unreachable — is the server running? Start it with <code className="mono">start.bat</code> (or
+            uvicorn on http://127.0.0.1:8000).
+          </span>
         </div>
       )}
 
-      <div className={`px-6 pb-16 ${route.name === "run" ? "" : "mx-auto max-w-6xl"}`}>
+      <div className={isRun ? "pb-16" : "mx-auto w-full max-w-[1200px] px-4 pb-16 md:px-8"}>
         <ErrorBanner err={err} onDismiss={() => setErr(null)} />
         {route.name === "home" && (
           <HomePage

@@ -1,106 +1,107 @@
 /* ==========================================================
-   OASIS-Lite M2 — design tokens (single source of truth)
-   Dark default; .oz.light overrides for the light theme.
-   Colors follow docs/DECISIONS.md #11: prompt-mandated semant
-   palette (PRO/NEU/CON/OK/WARN/ERR) + reference-artifact ramps.
+   OASIS_SIM — design tokens · v1.0 (from the approved design
+   reference; dark is the default theme, .light on the root
+   swaps every token). Components read semantic tokens only —
+   never raw hex values.
+   Legacy var names (--ac, --ev) are kept as aliases so older
+   components restyle automatically.
    ========================================================== */
+:root,
 .mo {
   /* ---- surfaces ---- */
-  --bg-0: #0B0D10;      /* app ground */
-  --bg-1: #11151A;      /* panels, sidebar, drawers */
-  --bg-2: #161B21;      /* inputs, raised rows, chips */
-  --bg-3: #1D242B;      /* hover */
-  --bg-4: #252B33;      /* pressed / selected strong */
+  --bg-0: #090B0E;      /* app ground */
+  --bg-1: #0F1216;      /* panels, sidebar content, drawers */
+  --bg-2: #151920;      /* inputs, raised rows, chips */
+  --bg-3: #1B2028;      /* hover */
+  --bg-4: #232933;      /* pressed / selected strong */
+  --bg-hover: rgba(255, 255, 255, 0.022);  /* row hover on panels */
 
   /* ---- lines ---- */
-  --line-1: #1E242C;    /* hairline dividers */
-  --line-2: #252B33;    /* component borders */
+  --line-1: #1E232B;    /* hairline dividers */
+  --line-2: #29303A;    /* component borders */
   --line-3: #3A4350;    /* hover borders */
 
   /* ---- text ---- */
-  --fg-1: #F3F5F7;      /* primary */
-  --fg-2: #9AA3AE;      /* secondary */
-  --fg-3: #66707C;      /* tertiary / meta */
-  --fg-4: #4A5560;      /* disabled, separators — never essential text */
-  --inverse: #F3F5F7;
+  --fg-1: #E8EBEF;      /* primary */
+  --fg-2: #A9B1BC;      /* secondary */
+  --fg-3: #808994;      /* tertiary / meta (4.9:1 on bg-2) */
+  --fg-4: #59616C;      /* disabled, separators — never essential text */
+  --inverse: #E8EBEF;
   --inverse-hover: #FFFFFF;
   --inverse-press: #C9CED6;
-  --fg-on-inverse: #0B0D10;
+  --fg-on-inverse: #090B0E;
 
-  /* ---- accent ---- */
-  --ac: #6CA6FF;
-  --ac-fg: #93BDFF;
-  --ac-soft: rgba(108, 166, 255, 0.11);
-  --ac-line: rgba(108, 166, 255, 0.42);
-  --ac-soft-hover: rgba(108, 166, 255, 0.20);
+  /* ---- interaction accent (focus, selection, links, live) ---- */
+  --accent: #6CA6FF;
+  --accent-fg: #93BDFF;
+  --accent-soft: rgba(108, 166, 255, 0.11);
+  --accent-line: rgba(108, 166, 255, 0.42);
+  --accent-soft-hover: rgba(108, 166, 255, 0.20);
+  /* legacy aliases */
+  --ac: var(--accent);
+  --ac-fg: var(--accent-fg);
+  --ac-soft: var(--accent-soft);
+  --ac-line: var(--accent-line);
+  --ac-soft-hover: var(--accent-soft-hover);
 
-  /* ---- stances ---- */
-  --con: #F59E0B;
-  --con-fg: #FBBF24;
-  --con-soft: rgba(245, 158, 11, 0.11);
-  --con-line: rgba(245, 158, 11, 0.42);
-  --neu: #8A939E;
-  --neu-fg: #A9B1BC;
-  --neu-soft: rgba(138, 147, 158, 0.12);
-  --neu-line: rgba(138, 147, 158, 0.40);
-  --pro: #14B8A6;
-  --pro-fg: #2DD4BF;
-  --pro-soft: rgba(20, 184, 166, 0.11);
-  --pro-line: rgba(20, 184, 166, 0.40);
+  /* ---- stance semantics (color + shape + label, never color alone) ---- */
+  --pro: #2EBBA8;  --pro-fg: #62D4C4;  --pro-soft: rgba(46, 187, 168, 0.11);  --pro-line: rgba(46, 187, 168, 0.40);
+  --neu: #8D99AA;  --neu-fg: #B7C0CC;  --neu-soft: rgba(141, 153, 170, 0.12); --neu-line: rgba(141, 153, 170, 0.40);
+  --con: #F0883A;  --con-fg: #F7A86A;  --con-soft: rgba(240, 136, 58, 0.11);  --con-line: rgba(240, 136, 58, 0.42);
 
-  /* ---- events (violet reserved) ---- */
-  --ev: #B08CFF;
-  --ev-fg: #C8AFFF;
-  --ev-soft: rgba(176, 140, 255, 0.12);
-  --ev-line: rgba(176, 140, 255, 0.44);
+  /* ---- event semantics (violet reserved for events, never reused) ---- */
+  --evt: #B08CFF;  --evt-fg: #C8AFFF;  --evt-soft: rgba(176, 140, 255, 0.11); --evt-line: rgba(176, 140, 255, 0.42);
+  /* legacy aliases */
+  --ev: var(--evt);
+  --ev-fg: var(--evt-fg);
+  --ev-soft: var(--evt-soft);
+  --ev-line: var(--evt-line);
 
-  /* ---- status ---- */
-  --ok: #22C55E;
-  --ok-fg: #4ADE80;
-  --ok-soft: rgba(34, 197, 94, 0.11);
-  --ok-line: rgba(34, 197, 94, 0.40);
-  --warn: #F59E0B;
-  --warn-fg: #FBBF24;
-  --warn-soft: rgba(245, 158, 11, 0.11);
-  --warn-line: rgba(245, 158, 11, 0.42);
-  --err: #EF4444;
-  --err-fg: #F87171;
-  --err-soft: rgba(239, 68, 68, 0.10);
-  --err-line: rgba(239, 68, 68, 0.42);
+  /* ---- system status ---- */
+  --ok: #4CC38A;   --ok-fg: #6FD6A4;   --ok-soft: rgba(76, 195, 138, 0.11);   --ok-line: rgba(76, 195, 138, 0.40);
+  --warn: #E3BF4B; --warn-fg: #EDD07A; --warn-soft: rgba(227, 191, 75, 0.11); --warn-line: rgba(227, 191, 75, 0.42);
+  --err: #F2706B;  --err-fg: #F79591;  --err-soft: rgba(242, 112, 107, 0.11); --err-line: rgba(242, 112, 107, 0.42);
 
-  /* ---- fonts ---- */
-  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* ---- effects ---- */
+  --scrim: rgba(4, 6, 8, 0.62);
+  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --grid-dot: rgba(255, 255, 255, 0.05);
 
-  /* ---- radii ---- */
+  /* ---- type ---- */
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---- shape + motion ---- */
   --r-1: 4px;
   --r-2: 6px;
   --r-3: 8px;
-
-  /* ---- motion ---- */
   --dur-1: 120ms;
   --dur-2: 200ms;
   --dur-3: 320ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* light-mode token overrides (values from the reference artifact system) */
+/* light-mode token overrides (values from the design reference) */
+:root.light,
 .mo.light {
-  --bg-0: #F3F4F6;
-  --bg-1: #FFFFFF;
-  --bg-2: #F7F8FA;
-  --bg-3: #EDEFF2;
-  --bg-4: #E3E6EA;
+  --bg-0: #F3F4F6; --bg-1: #FFFFFF; --bg-2: #F7F8FA; --bg-3: #EDEFF2; --bg-4: #E3E6EA;
+  --bg-hover: rgba(18, 21, 26, 0.025);
 
-  --line-1: #E5E8EC;
-  --line-2: #D7DBE1;
-  --line-3: #B9C0C9;
+  --line-1: #E5E8EC; --line-2: #D7DBE1; --line-3: #B9C0C9;
 
-  --fg-1: #12151A;
-  --fg-2: #444C58;
-  --fg-3: #5F6874;
-  --fg-4: #8A939E;
-  --fg-on-inverse: #FFFFFF;
+  --fg-1: #12151A; --fg-2: #444C58; --fg-3: #5F6874; --fg-4: #A1A8B1;
+  --inverse: #12151A; --inverse-hover: #000000; --inverse-press: #2C323B; --fg-on-inverse: #FFFFFF;
 
-  --ac-fg: #3F7FE8;
-  --other-fg: #12151A;
+  --accent: #2F6FE0; --accent-fg: #2257BD; --accent-soft: rgba(47, 111, 224, 0.08); --accent-line: rgba(47, 111, 224, 0.38);
+  --pro: #14937F; --pro-fg: #0B6F60; --pro-soft: rgba(20, 147, 127, 0.08); --pro-line: rgba(20, 147, 127, 0.38);
+  --neu: #6B7686; --neu-fg: #4A5462; --neu-soft: rgba(107, 118, 134, 0.09); --neu-line: rgba(107, 118, 134, 0.38);
+  --con: #D2691B; --con-fg: #9E4A0C; --con-soft: rgba(210, 105, 27, 0.08); --con-line: rgba(210, 105, 27, 0.40);
+  --evt: #7B57E6; --evt-fg: #5C3CC0; --evt-soft: rgba(123, 87, 230, 0.08); --evt-line: rgba(123, 87, 230, 0.38);
+  --ok: #1E9A62;  --ok-fg: #137247;  --ok-soft: rgba(30, 154, 98, 0.09);  --ok-line: rgba(30, 154, 98, 0.38);
+  --warn: #B38600; --warn-fg: #7D5E00; --warn-soft: rgba(179, 134, 0, 0.10); --warn-line: rgba(179, 134, 0, 0.40);
+  --err: #D2433D; --err-fg: #A9302B; --err-soft: rgba(210, 67, 61, 0.08); --err-line: rgba(210, 67, 61, 0.38);
+
+  --scrim: rgba(18, 21, 26, 0.32);
+  --shadow-pop: 0 16px 40px rgba(18, 21, 26, 0.16);
+  --grid-dot: rgba(18, 21, 26, 0.07);
 }
