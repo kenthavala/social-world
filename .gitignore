@@ -1,0 +1,11 @@
+# Secrets and runtime data
+.env
+data/
+.venv/
+node_modules/
+frontend/dist/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
