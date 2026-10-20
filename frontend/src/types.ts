@@ -31,6 +31,7 @@ export interface RunDetail {
   updated_at: string;
   started_at: string | null;
   finished_at: string | null;
+  provider?: { name?: string; model?: string } | null;
 }
 
 export interface RunConfig {

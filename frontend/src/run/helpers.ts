@@ -108,7 +108,7 @@ const chunkCache = new Map<string, ChunkInfo>();
 const chunkPending = new Map<string, Promise<ChunkInfo>>();
 const chunkListeners = new Set<() => void>();
 
-export function chunkInfo(sourceId: string, chunkId: string): ChunkInfo | null {
+export function chunkInfo(chunkId: string): ChunkInfo | null {
   return chunkCache.get(chunkId) ?? null;
 }
 

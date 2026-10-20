@@ -1,15 +1,22 @@
-// Events tab: authored runtime events. Composer + list (violet reserved for events).
-// Scheduled events persist server-side (events table) until the engine marks them fired.
-// Audience: "everyone" → public newsroom broadcast; a stakeholder group → private briefing.
-import { useEffect, useState } from "react";
-import { Megaphone } from "lucide-react";
+// Events: controlled interventions. Composer + log, violet reserved for events.
+// Scheduled events persist server-side (events table) until the engine marks them
+// fired. Audience: everyone → public newsroom broadcast; a stakeholder group →
+// private briefing (only those agents will remember it).
+import { useEffect, useMemo, useState } from "react";
+import { Megaphone, Zap } from "lucide-react";
+import type { RunDetail } from "../types";
 import * as api from "../api";
 import { Spinner } from "../common";
 
 type RunEventMap = Awaited<ReturnType<typeof api.listRunEvents>>["events"];
 
-export default function EventsTab({ runId, bumpKey, onError }: {
+const EV_BADGE: React.CSSProperties = {
+  color: "var(--evt-fg)", background: "var(--evt-soft)", borderColor: "var(--evt-line)",
+};
+
+export default function EventsTab({ runId, run, bumpKey, onError }: {
   runId: string;
+  run: RunDetail;
   bumpKey: number;
   onError: (e: unknown) => void;
 }) {
@@ -42,9 +49,7 @@ export default function EventsTab({ runId, bumpKey, onError }: {
         tick: tick === null || Number.isNaN(tick) ? null : tick,
         audience: audience === "all" ? "all" : audience,
       });
-      setPosted(audience === "all"
-        ? "ok"
-        : `private:${groups.find((g) => g === audience) ?? audience}`);
+      setPosted(audience === "all" ? "ok" : `private:${audience}`);
       setText("");
       setDeliverAt("");
       setAudience("all");
@@ -57,7 +62,7 @@ export default function EventsTab({ runId, bumpKey, onError }: {
     }
   }
 
-  const authored = (events ?? []).filter((e) => {
+  const authored = useMemo(() => (events ?? []).filter((e) => {
     if (e.kind === "event" || e.kind === "scene_event" || e.kind === "injected" || e.kind === "scheduled") {
       return true;
     }
@@ -67,73 +72,94 @@ export default function EventsTab({ runId, bumpKey, onError }: {
       return !((e.payload as { live?: boolean }).live);
     }
     return false;
-  });
+  }), [events]);
+
+  const scheduled = authored.filter((e) => e.kind === "scheduled" && (e.payload as { status?: string }).status === "scheduled");
+  const nextTick = Math.max(1, (run.last_completed_tick || 0) + 1);
+  const canControl = ["running", "seeding", "paused", "interrupted", "ready"].includes(run.status);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <div className="panel p-4">
-        <h2 className="t-h2 mb-1">Add an event</h2>
-        <p className="mb-3 text-sm" style={{ color: "var(--fg-2)" }}>
-          Events enter the simulated world at the tick you choose. Everyone gets a public
-          newsroom broadcast, or you can deliver a private briefing to one stakeholder group —
-          only those agents will remember it. Schedules are stored on the server, so they
-          survive a restart.
-        </p>
-        <textarea
-          className="input h-24"
-          placeholder="e.g. Overnight polls show public support dropping six points."
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label className="text-xs" style={{ color: "var(--fg-3)" }}>
-            Deliver at tick
-            <input
-              className="input mt-1 w-full"
-              inputMode="numeric"
-              placeholder="next tick"
-              value={deliverAt}
-              onChange={(e) => setDeliverAt(e.target.value.replace(/[^0-9]/g, ""))}
-            />
-          </label>
-          <label className="text-xs" style={{ color: "var(--fg-3)" }}>
-            Audience
-            <select
-              className="input mt-1 w-full"
-              value={audience}
-              onChange={(e) => setAudience(e.target.value)}
-            >
-              <option value="all">everyone (public broadcast)</option>
-              {groups.map((g) => (
-                <option key={g} value={g}>only “{g}” (private briefing)</option>
-              ))}
-            </select>
-          </label>
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      <div className="panel">
+        <div className="panel-head">
+          <h2 className="t-h3 flex items-center gap-2">
+            <Zap size={14} style={{ color: "var(--evt-fg)" }} /> Add an event
+          </h2>
+          <span className="t-meta">intervention</span>
         </div>
-        <div className="mt-3 flex items-center gap-2">
-          <button className="btn-primary" onClick={inject} disabled={!text.trim() || busy || events === null}>
-            <Megaphone size={14} /> {audience === "all" ? "Inject event" : "Brief group"}
-          </button>
-          {busy && <Spinner label="Sending…" />}
-        </div>
-        {posted && (
-          <p className="mt-2 text-xs" style={{ color: "var(--ok-fg)" }}>
-            {posted.startsWith("private")
-              ? `✓ Private briefing recorded — only the “${posted.slice(8)}” agents will encounter it at the chosen tick.`
-              : "✓ Event recorded — agents will encounter it from the tick you chose."}
+        <div className="panel-body flex flex-col gap-3">
+          <p className="t-body fg-2" style={{ fontSize: 13 }}>
+            Events enter the simulated world at the tick you choose. Everyone gets a public
+            newsroom broadcast, or you can deliver a private briefing to one stakeholder group —
+            only those agents will remember it. Schedules are stored on the server, so they
+            survive a restart.
           </p>
-        )}
+          <textarea
+            className="input"
+            placeholder="e.g. Overnight polls show public support dropping six points."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field">
+              <span className="label">Deliver at tick <span className="opt">(default: next tick)</span></span>
+              <input
+                className="input"
+                inputMode="numeric"
+                placeholder={`next tick (T${String(nextTick).padStart(2, "0")})`}
+                value={deliverAt}
+                onChange={(e) => setDeliverAt(e.target.value.replace(/[^0-9]/g, ""))}
+              />
+            </label>
+            <label className="field">
+              <span className="label">Audience</span>
+              <select className="input" value={audience} onChange={(e) => setAudience(e.target.value)}>
+                <option value="all">everyone — public broadcast</option>
+                {groups.map((g) => (
+                  <option key={g} value={g}>only “{g}” — private briefing</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-primary" onClick={inject} disabled={!text.trim() || busy || events === null}>
+              <Megaphone size={14} /> {audience === "all" ? "Inject event" : "Brief group"}
+            </button>
+            {busy && <Spinner label="Recording…" />}
+          </div>
+          {!canControl && (
+            <p className="t-meta">This run is {run.status} — events can still be recorded and will be delivered when the run resumes.</p>
+          )}
+          {posted && (
+            <div className="banner banner-info" style={{ fontSize: 12.5 }}>
+              <span className={`sg sg-evt`} style={{ marginTop: 3 }} />
+              <span>
+                {posted.startsWith("private")
+                  ? `Private briefing recorded — only the “${posted.slice(8)}” agents will encounter it at the chosen tick.`
+                  : "Event recorded — agents will encounter it from the tick you chose."}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="panel overflow-hidden">
-        <div className="px-4 py-2.5" style={{ borderBottom: "1px solid var(--line-1)" }}>
+        <div className="panel-head">
           <span className="eyebrow">Event log — {authored.length} recorded</span>
+          <span className="t-meta">{scheduled.length} pending</span>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto">
-          {events === null ? <Spinner /> : authored.length === 0 ? (
-            <p className="p-4 text-sm" style={{ color: "var(--fg-3)" }}>
-              No events yet. Injected events appear here the moment the backend records them.
-            </p>
+        <div className="max-h-[70vh] overflow-y-auto">
+          {events === null ? (
+            <div className="panel-body"><Spinner /></div>
+          ) : authored.length === 0 ? (
+            <div className="empty" style={{ padding: "36px 24px" }}>
+              <span className="empty-ic"><Zap size={20} style={{ color: "var(--evt-fg)" }} /></span>
+              <p className="t-h3">No events yet</p>
+              <p className="t-meta" style={{ maxWidth: 300 }}>
+                No interventions have been added to this simulation. Events let you nudge the
+                world mid-run — a poll, a headline, a private briefing.
+              </p>
+            </div>
           ) : authored.map((e, i) => {
             const p = e.payload as {
               text?: string; audience?: string; audience_size?: number;
@@ -142,34 +168,22 @@ export default function EventsTab({ runId, bumpKey, onError }: {
             const isScheduled = e.kind === "scheduled" && p.status === "scheduled";
             const isPrivate = p.private === true || (p.audience && p.audience !== "all");
             return (
-              <div key={i} className="px-4 py-3"
-                   style={i < authored.length - 1 ? { borderBottom: "1px solid var(--line-1)" } : undefined}>
-                <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: "var(--fg-3)" }}>
+              <div key={i} className="px-4 py-3" style={i < authored.length - 1 ? { borderBottom: "1px solid var(--line-1)" } : undefined}>
+                <div className="flex flex-wrap items-center gap-2">
                   {isScheduled ? (
-                    <span className="badge" style={{ color: "var(--ev-fg)", background: "var(--ev-soft)", borderColor: "var(--ev-line)" }}>
-                      SCHEDULED → T{e.tick}
-                    </span>
+                    <span className="badge" style={EV_BADGE}>SCHEDULED → T{String(e.tick).padStart(2, "0")}</span>
                   ) : (
-                    <span className="badge" style={{ color: "var(--ev-fg)", background: "var(--ev-soft)", borderColor: "var(--ev-line)" }}>
-                      EVENT
-                    </span>
+                    <span className="badge" style={EV_BADGE}>DELIVERED · T{String(e.tick).padStart(2, "0")}</span>
                   )}
-                  {isPrivate && (
-                    <span className="chip" style={{ fontSize: 10 }}>
-                      private · {p.audience}
-                    </span>
+                  {isPrivate ? (
+                    <span className="badge">private · {p.audience}{p.audience_size ? ` · ${p.audience_size} agents` : ""}</span>
+                  ) : (
+                    <span className="badge">everyone{p.pushed_to != null ? ` · pushed doc to ${p.pushed_to}` : ""}</span>
                   )}
-                  {!isPrivate && p.pushed_to != null && (
-                    <span className="chip" style={{ fontSize: 10 }}>pushed doc to {p.pushed_to} agents</span>
-                  )}
-                  <span>T{String(e.tick).padStart(2, "0")}</span>
-                  <span className="mono ml-auto" style={{ color: "var(--fg-4)" }}>
-                    {e.created_at?.slice(11, 19)}
-                  </span>
+                  {p.chunk_id && <span className="badge mono">{p.chunk_id}</span>}
+                  <span className="t-id ml-auto">{e.created_at?.slice(0, 10)} {e.created_at?.slice(11, 19)}</span>
                 </div>
-                <p className="t-post mt-1.5" style={{ color: "var(--fg-1)" }}>
-                  {p.text ?? JSON.stringify(e.payload)}
-                </p>
+                <p className="t-post mt-1.5" style={{ fontSize: 14 }}>{p.text ?? JSON.stringify(e.payload)}</p>
               </div>
             );
           })}

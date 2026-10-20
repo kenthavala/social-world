@@ -223,7 +223,7 @@ export function Shell({ route, children }: { route: Route; children: React.React
   );
 }
 
-function useIsMobile(): boolean {
+export function useIsMobile(): boolean {
   const [m, setM] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");

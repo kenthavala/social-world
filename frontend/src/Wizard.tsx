@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, FileText, LayoutGrid, LibraryBig, Wand2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, LayoutGrid, LibraryBig, Upload, Wand2, X } from "lucide-react";
 import type { EstimateResponse, RunDetail, SourceStats, WorldBrief } from "./types";
 import * as api from "./api";
 import { Spinner } from "./common";
@@ -156,7 +156,7 @@ export default function Wizard({ onDone, onCancel, onError }: {
 
   const stepStatus = useMemo(() => {
     const s: Record<number, string> = {
-      1: source ? `${source.pages} pp · ${source.chunks} chunks` : "Required — upload or choose a PDF",
+      1: source ? `${source.pages} pp · ${source.chunks} chunks` : "Required — upload or choose a document",
       2: brief ? `${brief.issues.length} issues · ${brief.stakeholder_groups.length} groups` : "Required — name and research brief",
       3: `${agents} agents · ${ticks} ticks · ${writesPerTick}/tick`,
       4: `${ticks} ticks · ≤ ${est?.estimate?.max_llm_calls ?? "—"} LLM calls`,
@@ -165,49 +165,42 @@ export default function Wizard({ onDone, onCancel, onError }: {
   }, [source, brief, agents, ticks, writesPerTick, est]);
 
   return (
-    <div className="pt-8">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="pt-6 md:pt-8">
+      <div className="mb-5 flex items-center justify-between gap-3">
         <div>
           <div className="eyebrow">New simulation</div>
-          <div className="mt-0.5 flex items-center gap-2 text-xs" style={{ color: "var(--fg-3)" }}>
-            <span className="chip">DRAFT · AUTOSAVED</span>
-            <span>{STEPS[step - 1].label}</span>
+          <div className="mt-1 flex flex-wrap items-center gap-2 t-meta">
+            <span className="badge" style={{ borderStyle: "dashed" }}>DRAFT · AUTOSAVED</span>
+            <span>{STEPS[step - 1].label} — step {step} of 4</span>
           </div>
         </div>
-        <button className="btn-ghost btn-sm" onClick={onCancel}>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>
           <X size={14} /> Cancel
         </button>
       </div>
 
       {/* step rail */}
-      <div className="panel mb-5 flex items-stretch px-1 py-1">
+      <div className="steps mb-6 flex-wrap">
         {STEPS.map((s) => {
           const active = s.n === step;
           const done = s.n < step;
           return (
-            <button
-              key={s.n}
-              onClick={() => s.n < step && setStep(s.n)}
-              className={`flex items-center gap-2 px-3 py-2 text-left ${s.n < step ? "cursor-pointer" : "cursor-default"}`}
-              style={active
-                ? { background: "var(--bg-2)", borderRadius: "var(--r-2)", border: "1px solid var(--ac-line)" }
-                : { borderRadius: "var(--r-2)", border: "1px solid transparent", color: done ? "var(--fg-2)" : "var(--fg-3)" }}
-            >
-              <span className={`mono ${done ? "" : ""}`} style={{
-                fontSize: 11,
-                color: active ? "var(--ac-fg)" : done ? "var(--ok-fg)" : "var(--fg-4)",
-              }}>
-                {done ? "✓" : s.n}
-              </span>
-              <span className="flex flex-col">
-                <span style={{ fontSize: 13, fontWeight: active ? 600 : 500, color: active ? "var(--fg-1)" : undefined }}>
-                  {s.label}
+            <span key={s.n} className="flex items-center" style={{ flex: s.n < 4 ? "1 1 auto" : "0 0 auto" }}>
+              <button
+                className={`step ${done ? "is-done" : ""} ${active ? "is-current" : ""}`}
+                onClick={() => s.n < step && setStep(s.n)}
+                disabled={s.n > step}
+              >
+                <span className="step-n">{done ? "✓" : s.n}</span>
+                <span className="flex flex-col items-start gap-0.5">
+                  <span>{s.label}</span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--fg-4)", fontWeight: 400 }}>
+                    {done ? "done" : stepStatus[s.n]}
+                  </span>
                 </span>
-                <span className="mono" style={{ fontSize: 10, color: "var(--fg-4)" }}>
-                  {done ? "done" : stepStatus[s.n]}
-                </span>
-              </span>
-            </button>
+              </button>
+              {s.n < 4 && <span className={`step-line ${done ? "is-done" : ""}`} />}
+            </span>
           );
         })}
       </div>
@@ -264,11 +257,11 @@ function Nav({ onBack, nextLabel, onNext, busy }: {
 }) {
   return (
     <div className="mt-6 flex items-center justify-between">
-      <button className="btn-ghost" onClick={onBack} disabled={busy || !onBack}>
+      <button className="btn btn-ghost" onClick={onBack} disabled={busy || !onBack}>
         <ArrowLeft size={15} /> Back
       </button>
       {onNext && (
-        <button className="btn-primary" onClick={onNext} disabled={busy}>
+        <button className="btn btn-primary" onClick={onNext} disabled={busy}>
           {nextLabel} <ArrowRight size={15} />
         </button>
       )}
@@ -300,56 +293,42 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
   }
 
   return (
-    <div className="card">
-      <h2 className="t-h2 mb-1">Source document</h2>
-      <p className="mb-4 text-sm" style={{ color: "var(--fg-2)" }}>
-        The PDF your agents read. Every post they write cites the page and chunk it drew from.
+    <div className="panel panel-body">
+      <h2 className="t-h2">Source document</h2>
+      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 560 }}>
+        The document your agents read. Every post they write cites the page and chunk it drew from.
       </p>
 
-      <div
+      <label
+        className={`dropzone ${drag ? "is-drag" : ""}`}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        className="mb-4 flex flex-col items-center justify-center gap-2 border border-dashed px-6 py-10 text-center"
-        style={{
-          borderColor: drag ? "var(--ac-line)" : "var(--line-3)",
-          background: drag ? "var(--ac-soft)" : "var(--bg-2)",
-          borderRadius: "var(--r-3)",
-          transition: "border-color 120ms, background 120ms",
-        }}
       >
-        <label className="cursor-pointer">
-          <span className="btn-ghost">
-            <FileText size={15} /> Drop a PDF here, or browse
-          </span>
-          <input
-            type="file"
-            className="absolute h-1 w-1 opacity-0"
-            accept=".pdf,.txt,.md,.docx"
-            onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0], null)}
-          />
-        </label>
-        <span style={{ color: "var(--fg-3)", fontSize: 12 }}>
-          PDFs with a text layer. Scanned pages without text can&apos;t be cited.
+        <span className="empty-ic">
+          <Upload size={20} />
         </span>
-      </div>
+        <span style={{ fontWeight: 500 }}>Drop a PDF here, or browse</span>
+        <span className="t-meta">PDF / TXT / MD / DOCX with a text layer · scanned pages without text can't be cited</span>
+        <input
+          type="file"
+          className="absolute h-1 w-1 opacity-0"
+          accept=".pdf,.txt,.md,.docx"
+          onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0], null)}
+        />
+      </label>
 
       {lib !== null && lib.length > 0 && (
-        <div className="mb-4">
+        <div className="mt-4">
           <div className="eyebrow mb-2 flex items-center gap-1.5"><LibraryBig size={12} /> Choose from library</div>
           <div className="flex flex-wrap gap-2">
             {lib.map((d) => {
               const id = d.id ?? d.source_id ?? "";
               return (
-                <button
-                  key={id}
-                  onClick={() => onChoose(d)}
-                  className="chip cursor-pointer"
-                  title={id}
-                >
+                <button key={id} onClick={() => onChoose(d)} className="chip" title={id}>
                   <LayoutGrid size={11} />
                   {d.filename}
-                  {d.pages != null && <span style={{ color: "var(--fg-4)" }}>{d.pages}pp</span>}
+                  {d.pages != null && <span className="chip-n">{d.pages} pp</span>}
                 </button>
               );
             })}
@@ -357,27 +336,42 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
         </div>
       )}
 
-      <details className="mb-4 text-sm" style={{ color: "var(--fg-2)" }}>
-        <summary className="cursor-pointer select-none">…or paste text instead</summary>
+      <details className="mt-4">
+        <summary className="t-meta cursor-pointer select-none">…or paste text instead</summary>
         <textarea
-          className="input mt-2 h-32"
+          className="input mt-2"
           placeholder="Paste document text (min. a couple of paragraphs)…"
           value={pasted}
           onChange={(e) => setPasted(e.target.value)}
         />
-        <button className="btn-ghost mt-2" onClick={() => onUpload(null, pasted)} disabled={!pasted.trim() || busy}>
+        <button className="btn btn-ghost mt-2" onClick={() => onUpload(null, pasted)} disabled={!pasted.trim() || busy}>
           Use this text
         </button>
       </details>
 
-      {busy && <Spinner label="Extracting, cleaning, chunking…" />}
+      {busy && <div className="mt-4"><Spinner label="Extracting, cleaning, chunking…" /></div>}
 
       {source && (
-        <div className="panel-2 p-3 text-sm">
-          <p style={{ color: "var(--ok-fg)" }}>✓ {source.filename}</p>
-          <p className="mt-1 text-xs" style={{ color: "var(--fg-3)" }}>
-            <span className="mono">{source.status}</span> · {source.pages} pages · {source.chunks} chunks · {source.words} words
-            {source.deduplicated ? " · already uploaded (deduplicated)" : ""}
+        <div className="panel-2 mt-4 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <FileText size={14} style={{ color: "var(--fg-3)" }} />
+            <span style={{ fontWeight: 500 }}>{source.filename}</span>
+            <span className={`status ${source.status === "ready" ? "status-ready" : "status-ingesting"}`}>
+              {source.status === "ready" ? (
+                <svg className="ic-xs" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 8.5 6.5 12 13 4.5" /></svg>
+              ) : <span className="dot dot-pulse" />}
+              {source.status}
+            </span>
+          </div>
+          <dl className="kv mt-3" style={{ gridTemplateColumns: "96px minmax(0,1fr)", gap: "8px 12px", fontSize: 12.5 }}>
+            <dt>Pages</dt><dd className="mono">{source.pages}</dd>
+            <dt>Source chunks</dt><dd className="mono">{source.chunks}</dd>
+            <dt>Words</dt><dd className="mono">{source.words.toLocaleString()}</dd>
+            <dt>Brief</dt><dd>{source.has_brief ? "generated — continue to review" : "not yet generated (next step)"}</dd>
+          </dl>
+          {source.deduplicated && <p className="t-meta mt-2">This document was already uploaded — the existing extraction was reused.</p>}
+          <p className="t-meta mt-2">
+            Inspect the extracted chunks any time in <a className="kbd-link" href="#/documents">Documents</a>.
           </p>
         </div>
       )}
@@ -399,62 +393,86 @@ function StepBrief({ name, setName, scenario, setScenario, brief, busy, onGenera
 }) {
   const canGen = scenario.trim().length > 0;
   return (
-    <div className="card">
-      <h2 className="t-h2 mb-1">Brief</h2>
-      <p className="mb-4 text-sm" style={{ color: "var(--fg-2)" }}>
+    <div className="panel panel-body">
+      <h2 className="t-h2">Brief</h2>
+      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 620 }}>
         Name the simulation and pose the question. The LLM reads the document and builds the brief:
         issues, stakeholder groups and claims — with page citations.
       </p>
 
-      <label className="label" htmlFor="sim-name">Simulation name</label>
-      <input
-        id="sim-name"
-        className="input mb-3"
-        placeholder="e.g. Congestion Charge — Public Response"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        autoFocus
-      />
-
-      <label className="label" htmlFor="sim-brief">Research brief / scenario</label>
-      <textarea
-        id="sim-brief"
-        className="input h-24"
-        placeholder={'e.g. "How will our town react if the council approves the wind project next quarter?"'}
-        value={scenario}
-        onChange={(e) => setScenario(e.target.value)}
-      />
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="field">
+          <span className="label">Simulation name</span>
+          <input
+            className="input"
+            placeholder="e.g. Congestion Charge — Public Response"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+        </label>
+      </div>
+      <label className="field mt-4">
+        <span className="label">Research brief / scenario</span>
+        <textarea
+          className="input"
+          placeholder={'e.g. "How will our town react if the council approves the wind project next quarter?"'}
+          value={scenario}
+          onChange={(e) => setScenario(e.target.value)}
+        />
+      </label>
 
       <div className="mt-3 flex items-center gap-3">
-        <button className="btn-primary" onClick={onGenerate} disabled={!canGen || busy}>
+        <button className="btn btn-primary" onClick={onGenerate} disabled={!canGen || busy}>
           <Wand2 size={15} /> {brief ? "Regenerate brief" : "Generate world brief"}
         </button>
         {busy && <Spinner label="The LLM is reading your document…" />}
       </div>
 
       {brief && (
-        <div className="mt-5">
-          <p className="mb-2 text-sm" style={{ color: "var(--fg-2)" }}>{brief.summary}</p>
+        <div className="mt-6">
+          <div className="banner banner-info mb-4" style={{ alignItems: "flex-start" }}>
+            <span>
+              {brief.summary}
+              {brief.fallback && <span className="t-meta block mt-1">(fallback brief — the provider failed, so issues were derived deterministically from the document's structure)</span>}
+            </span>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {brief.issues.map((iss) => (
-              <div key={iss.id} className="panel-2 p-3 text-sm">
-                <p style={{ fontWeight: 600 }}>{iss.name}</p>
-                <p className="mt-1 text-xs" style={{ color: "var(--fg-3)" }}>{iss.question}</p>
-                <p className="mt-2 text-xs">
+              <div key={iss.id} className="panel-2 p-3.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p style={{ fontWeight: 600 }}>{iss.name}</p>
+                  <span className="t-id">{iss.id}</span>
+                </div>
+                <p className="t-meta mt-1">{iss.question}</p>
+                <p className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   <span className="badge st-pro">{iss.pro_label}</span>
-                  {"  vs  "}
+                  <span className="t-meta">vs</span>
                   <span className="badge st-con">{iss.con_label}</span>
                 </p>
+                {iss.evidence_chunk_ids.length > 0 && (
+                  <p className="mt-2 flex flex-wrap gap-1.5">
+                    {iss.evidence_chunk_ids.slice(0, 3).map((c) => (
+                      <span key={c} className="cite" style={{ cursor: "default", height: 20 }}>
+                        <span className="cite-p">evidence</span><span className="cite-sep">·</span><span>{c.length > 10 ? c.slice(0, 10) : c}</span>
+                      </span>
+                    ))}
+                  </p>
+                )}
               </div>
             ))}
           </div>
-          <div className="mt-3 grid gap-2 text-sm">
-            {brief.stakeholder_groups.map((g) => (
-              <div key={g.name} className="flex items-center gap-2 panel-2 p-2">
-                <span style={{ fontWeight: 600 }}>{g.name}</span>
-                <span className="text-xs" style={{ color: "var(--fg-3)" }}>{g.description}</span>
-              </div>
-            ))}
+          <div className="mt-4">
+            <div className="eyebrow mb-2">Stakeholder groups — {brief.stakeholder_groups.length}</div>
+            <div className="grid gap-2">
+              {brief.stakeholder_groups.map((g) => (
+                <div key={g.name} className="panel-2 flex flex-wrap items-center gap-2 p-3">
+                  <span style={{ fontWeight: 600 }}>{g.name}</span>
+                  <span className="t-meta">{g.description}</span>
+                  <span className="badge ml-auto">{g.size_hint}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -475,61 +493,68 @@ function StepAgents(p: {
   onNext: () => void;
 }) {
   return (
-    <div className="card">
-      <h2 className="t-h2 mb-1">Agents</h2>
-      <p className="mb-4 text-sm" style={{ color: "var(--fg-2)" }}>
-        Population, run length and how many agents post per tick.
+    <div className="panel panel-body">
+      <h2 className="t-h2">Agents</h2>
+      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 560 }}>
+        Population, run length and how many agents post per tick. The seed makes runs reproducible.
       </p>
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-5 flex flex-wrap gap-2">
         {PRESETS.map((ps) => (
           <button
             key={ps.name}
             onClick={() => p.applyPreset(ps.name)}
-            className={p.preset === ps.name ? "btn-accent" : "btn-ghost"}
+            className={p.preset === ps.name ? "btn btn-accent" : "btn btn-ghost"}
           >
             <span style={{ fontWeight: 600 }}>{ps.name}</span>
             <span className="mono" style={{ fontSize: 10, opacity: 0.8 }}>
-              {ps.agents}a · {ps.ticks}t
+              {ps.agents} agents · {ps.ticks} ticks
             </span>
           </button>
         ))}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <span className="label">Agents: {p.agents}</span>
+      <div className="grid gap-5 sm:grid-cols-2">
+        <label className="field">
+          <span className="label">Agents <span className="opt mono">{p.agents}</span></span>
           <input type="range" min={5} max={100} value={p.agents}
-                 onChange={(e) => p.setAgents(+e.target.value)} className="w-full" style={{ accentColor: "var(--ac)" }} />
-        </div>
-        <div>
-          <span className="label">Ticks: {p.ticks}</span>
+                 onChange={(e) => p.setAgents(+e.target.value)} className="w-full" />
+        </label>
+        <label className="field">
+          <span className="label">Ticks <span className="opt mono">{p.ticks}</span></span>
           <input type="range" min={1} max={100} value={p.ticks}
-                 onChange={(e) => p.setTicks(+e.target.value)} className="w-full" style={{ accentColor: "var(--ac)" }} />
-        </div>
-        <div>
-          <span className="label">Writes per tick: {p.writesPerTick}</span>
+                 onChange={(e) => p.setTicks(+e.target.value)} className="w-full" />
+        </label>
+        <label className="field">
+          <span className="label">Writes per tick <span className="opt mono">{p.writesPerTick}</span></span>
           <input type="range" min={0} max={20} value={p.writesPerTick}
-                 onChange={(e) => p.setWritesPerTick(+e.target.value)} className="w-full" style={{ accentColor: "var(--ac)" }} />
-        </div>
-        <div>
-          <label className="label">Random seed</label>
+                 onChange={(e) => p.setWritesPerTick(+e.target.value)} className="w-full" />
+          <span className="hint">How many agents post each tick. 0 = reactions only (deterministic).</span>
+        </label>
+        <div className="field">
+          <span className="label">Random seed</span>
           <div className="flex gap-2">
             <input className="input mono" type="number" value={p.seed}
                    onChange={(e) => p.setSeed(+e.target.value)} />
-            <button className="btn-ghost" onClick={() => p.setSeed(Math.floor(Math.random() * 2 ** 31))}>
+            <button className="btn btn-ghost flex-none" onClick={() => p.setSeed(Math.floor(Math.random() * 2 ** 31))}>
               Reroll
             </button>
           </div>
+          <span className="hint">Same seed + same provider responses → same run structure.</span>
         </div>
       </div>
 
       {p.est && (
-        <div className="mt-4 panel-2 p-3 text-sm" style={{ color: "var(--fg-2)" }}>
-          Estimated LLM calls: <strong style={{ color: "var(--fg-1)" }}>{p.est.estimate.max_llm_calls}</strong> (core {p.est.estimate.core_calls})
+        <div className="panel-2 mt-5 p-4">
+          <dl className="kv" style={{ gridTemplateColumns: "150px minmax(0,1fr)", gap: "8px 12px", fontSize: 13 }}>
+            <dt>LLM call budget</dt>
+            <dd className="mono">≤ {p.est.estimate.max_llm_calls} <span className="fg-3">(core {p.est.estimate.core_calls})</span></dd>
+            <dt>Per provider</dt>
+            <dd className="mono">{Object.entries(p.est.estimate.per_provider ?? {}).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}</dd>
+          </dl>
           {p.est.warnings?.length > 0 && (
-            <ul className="mt-2 list-disc pl-5" style={{ color: "var(--warn-fg)" }}>
-              {p.est.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0 t-meta" style={{ color: "var(--warn-fg)" }}>
+              {p.est.warnings.map((w, i) => <li key={i}>⚠ {w}</li>)}
             </ul>
           )}
         </div>
@@ -567,27 +592,30 @@ function StepRun(p: {
   ], [p]);
 
   return (
-    <div className="card">
-      <h2 className="t-h2 mb-1">Run</h2>
-      <p className="mb-4 text-sm" style={{ color: "var(--fg-2)" }}>
-        {p.ticks} ticks · ≤ {p.est?.estimate?.max_llm_calls ?? "—"} LLM calls. You can pause or stop at any moment.
+    <div className="panel panel-body">
+      <h2 className="t-h2">Review & launch</h2>
+      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 560 }}>
+        {p.ticks} ticks · ≤ {p.est?.estimate?.max_llm_calls ?? "—"} LLM calls. You can pause or stop
+        at any moment; every tick is committed atomically, so a crash never loses a finished tick.
       </p>
-      <dl className="mt-4 grid gap-2 text-sm">
+      <dl className="kv m-0" style={{ gridTemplateColumns: "168px minmax(0,1fr)", gap: "10px 16px" }}>
         {summary.map(([k, v]) => (
-          <div key={k} className="flex gap-3 panel-2 px-3 py-2">
-            <dt className="w-36 shrink-0" style={{ color: "var(--fg-3)" }}>{k}</dt>
+          <div key={k} className="contents">
+            <dt>{k}</dt>
             <dd className="truncate">{v}</dd>
           </div>
         ))}
       </dl>
       {missingBrief && (
-        <p className="mt-3 rounded-md p-3 text-xs"
-           style={{ background: "var(--warn-soft)", border: "1px solid var(--warn-line)", color: "var(--warn-fg)" }}>
-          No world brief on this source yet — the run can still start, but agents will need a fallback brief.
-        </p>
+        <div className="banner banner-warn mt-4">
+          <span>
+            No world brief on this source yet — the run can still start, but agents will need a
+            fallback brief. Go back to step 2 to generate one.
+          </span>
+        </div>
       )}
       <Nav onBack={p.onBack} nextLabel="Launch simulation" onNext={p.onLaunch} busy={p.busy} />
-      {p.busy && <div className="mt-3"><Spinner label="Starting…" /></div>}
+      {p.busy && <div className="mt-3"><Spinner label="Creating the run…" /></div>}
     </div>
   );
 }

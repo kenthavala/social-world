@@ -51,94 +51,95 @@ export default function DocumentsPage({ onError }: { onError: (e: unknown) => vo
   const selDoc = useMemo(() => docs?.find((d) => (d.id ?? d.source_id) === sel) ?? null, [docs, sel]);
 
   return (
-    <div className="pt-8">
-      <div className="mb-6">
-        <h1 className="t-h1">Documents</h1>
-        <p className="mt-1 text-sm" style={{ color: "var(--fg-2)" }}>
-          Every chunk agents can cite, with its real page range and citation count.
-        </p>
+    <div className="pt-6 md:pt-8">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="t-h1">Documents</h1>
+          <p className="t-body fg-2 mt-1">
+            Every chunk agents can cite, with its real page range and citation count.
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={() => navigate({ name: "wizard" })}>
+          <Plus size={14} /> New simulation
+        </button>
       </div>
 
       {docs === null ? (
-        <Spinner label="Loading documents" />
+        <div className="panel panel-body"><Spinner label="Loading documents…" /></div>
       ) : docs.length === 0 ? (
-        <div className="panel p-10 text-center" style={{ color: "var(--fg-3)" }}>
-          <FileText size={22} className="mx-auto mb-3" />
-          No documents yet. Upload one from the new-simulation wizard.
+        <div className="empty panel">
+          <span className="empty-ic"><FileText size={20} /></span>
+          <p className="t-h3">No documents yet</p>
+          <p className="t-meta" style={{ maxWidth: 340 }}>
+            Upload a source document to begin — ingestion extracts text, cleans boilerplate and
+            chunks it so agents can cite exact pages.
+          </p>
+          <button className="btn btn-primary" onClick={() => navigate({ name: "wizard" })}>
+            <Plus size={14} /> Upload in the wizard
+          </button>
         </div>
       ) : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: "minmax(260px, 340px) 1fr" }}>
-          <div className="flex flex-col gap-2">
-            {docs.map((d) => {
+        <div className="grid items-start gap-4" style={{ gridTemplateColumns: "minmax(0, 340px) minmax(0, 1fr)" }}>
+          <div className="panel overflow-hidden">
+            {docs.map((d, i) => {
               const id = d.id ?? d.source_id ?? "";
               const active = id === sel;
               return (
                 <button
                   key={id}
                   onClick={() => setSel(id)}
-                  className="panel p-3 text-left"
-                  style={active ? { borderColor: "var(--ac-line)", cursor: "pointer" } : { cursor: "pointer" }}
+                  className={`list-row ${active ? "is-selected" : ""}`}
+                  style={{ borderBottom: i < docs.length - 1 ? "1px solid var(--line-1)" : 0, alignItems: "flex-start" }}
                 >
-                  <div className="flex items-center gap-2">
-                    <FileText size={14} style={{ color: "var(--fg-3)" }} />
-                    <span className="truncate t-h3" title={d.filename}>
-                      {d.filename}
+                  <FileText size={14} style={{ color: "var(--fg-3)", marginTop: 3 }} />
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="t-h3 ellipsis" title={d.filename}>{d.filename}</span>
+                    <span className="t-meta flex flex-wrap items-center gap-2">
+                      <span className={`badge ${d.status === "ready" ? "s-ok" : d.status === "failed" ? "s-err" : ""}`} style={{ fontSize: 10 }}>
+                        {d.status === "ready" ? "READY" : d.status.toUpperCase()}
+                      </span>
+                      {d.pages != null && <span className="mono">{d.pages} pp</span>}
+                      {d.chunks != null && <span className="mono">{d.chunks} chunks</span>}
+                      <span>{d.has_brief ? "brief generated" : "no brief"}</span>
                     </span>
-                  </div>
-                  <div className="mono mt-1 flex items-center gap-2 text-[11px]" style={{ color: "var(--fg-3)" }}>
-                    <span
-                      className="badge"
-                      style={
-                        d.status === "ready"
-                          ? { color: "var(--ok-fg)", background: "var(--ok-soft)", borderColor: "var(--ok-line)" }
-                          : d.status === "failed"
-                            ? { color: "var(--err-fg)", background: "var(--err-soft)", borderColor: "var(--err-line)" }
-                            : undefined
-                      }
-                    >
-                      {d.status === "ready" ? "READY" : d.status.toUpperCase()}
-                    </span>
-                    {d.pages != null && <span>{d.pages} pp</span>}
-                  </div>
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          <div className="min-w-0">
+          <div className="min-w-0 flex flex-col gap-4">
             {selDoc && (
-              <div className="panel mb-4 p-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <h2 className="t-h2">{selDoc.filename}</h2>
-                  <button className="btn-accent btn-sm" onClick={() => navigate({ name: "wizard" })}>
+              <div className="panel">
+                <div className="panel-head flex-wrap" style={{ minHeight: 56, padding: "10px 16px" }}>
+                  <div className="min-w-0">
+                    <h2 className="t-h2 ellipsis" title={selDoc.filename}>{selDoc.filename}</h2>
+                    <p className="t-meta mono mt-0.5">
+                      {selDoc.id ?? selDoc.source_id}
+                    </p>
+                  </div>
+                  <button className="btn btn-accent btn-sm" onClick={() => navigate({ name: "wizard" })}>
                     <Plus size={13} /> New simulation from this document
                   </button>
                 </div>
-                <div className="mono mt-2 text-[11px]" style={{ color: "var(--fg-3)" }}>
-                  <span className="mono">{selDoc.id ?? selDoc.source_id}</span>
-                  <span className="mx-1.5" aria-hidden>·</span>
-                  {selDoc.pages ?? "?"} pages
-                  <span className="mx-1.5" aria-hidden>·</span>
-                  {chunks?.length ?? "…"} chunks
-                  <span className="mx-1.5" aria-hidden>·</span>
-                  {selDoc.has_brief ? "brief generated" : "no brief"}
-                </div>
+                <dl className="kv panel-body" style={{ gridTemplateColumns: "120px minmax(0,1fr)", gap: "8px 16px", fontSize: 12.5 }}>
+                  <dt>Pages</dt><dd className="mono">{selDoc.pages ?? "?"}</dd>
+                  <dt>Source chunks</dt><dd className="mono">{chunks?.length ?? "…"}</dd>
+                  <dt>Brief</dt><dd>{selDoc.has_brief ? "generated" : "not generated yet"}</dd>
+                  <dt>Citation counts</dt><dd>per chunk, counted across all runs</dd>
+                </dl>
               </div>
             )}
 
             {chunks === null ? null : chunks.length === 0 ? (
-              <div className="panel p-6 text-center text-xs" style={{ color: "var(--fg-3)" }}>
-                No chunks recorded for this document.
+              <div className="panel panel-body">
+                <p className="t-meta">No chunks recorded for this document.</p>
               </div>
             ) : (
-              <div
-                className="panel flex max-h-[70vh] flex-col overflow-hidden"
-              >
-                <div
-                  className="flex-none px-4 py-2.5"
-                  style={{ borderBottom: "1px solid var(--line-1)" }}
-                >
-                  <span className="eyebrow">Chunks</span>
+              <div className="panel flex max-h-[70vh] flex-col overflow-hidden">
+                <div className="panel-head">
+                  <span className="eyebrow">Chunks — {chunks.length}</span>
+                  <span className="t-meta">click a row to read the extracted text</span>
                 </div>
                 <div className="overflow-y-auto">
                   {chunks.map((c) => {
@@ -146,27 +147,25 @@ export default function DocumentsPage({ onError }: { onError: (e: unknown) => vo
                     return (
                       <div key={c.id} style={{ borderBottom: "1px solid var(--line-1)" }}>
                         <button
-                          className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs"
-                          style={{ color: "var(--fg-3)" }}
+                          className="list-row"
                           onClick={() => setOpenChunk(open ? null : c.id)}
                           aria-expanded={open}
+                          style={{ gap: 10, paddingTop: 10, paddingBottom: 10 }}
                         >
-                          <ChevronDown size={12} className="flex-none"
+                          <ChevronDown size={13} className="flex-none"
                                        style={{ transform: open ? "none" : "rotate(-90deg)", color: "var(--fg-4)" }} />
-                          <span className="mono">{c.id}</span>
+                          <span className="mono" style={{ fontSize: 12 }}>{c.id}</span>
                           {c.page_start != null && (
-                            <span className="mono">
+                            <span className="mono t-meta">
                               p. {c.page_start}{c.page_end != null && c.page_end !== c.page_start ? `–${c.page_end}` : ""}
                             </span>
                           )}
-                          {c.n_words != null && <span className="mono">{c.n_words} words</span>}
-                          <span className="mono ml-auto">
+                          {c.n_words != null && <span className="mono t-meta">{c.n_words} words</span>}
+                          <span className={`badge ml-auto ${c.citations > 0 ? "s-run" : ""}`} style={{ fontSize: 10 }}>
                             {c.citations > 0 ? `${c.citations} citation${c.citations === 1 ? "" : "s"}` : "uncited"}
                           </span>
                         </button>
-                        {open && (
-                          <ChunkDetail sourceId={sel} chunk={c} />
-                        )}
+                        {open && <ChunkDetail sourceId={sel} chunk={c} />}
                       </div>
                     );
                   })}
@@ -189,10 +188,9 @@ function ChunkDetail({ sourceId, chunk }: { sourceId: string | null; chunk: Chun
   }, [sourceId, chunk.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="px-4 pb-3 pl-10">
-      <p className="eyebrow mb-1">{chunk.heading || full?.heading || ""}</p>
-      <div className="rounded p-3 text-sm leading-relaxed whitespace-pre-wrap"
-           style={{ background: "var(--bg-2)", border: "1px solid var(--line-1)", color: "var(--fg-1)" }}>
+    <div className="pb-3.5 pl-11 pr-4">
+      <p className="eyebrow mb-1.5">{chunk.heading || full?.heading || ""}</p>
+      <div className="inset p-3.5" style={{ fontSize: 13.5, lineHeight: 1.7, whiteSpace: "pre-wrap", color: "var(--fg-1)" }}>
         {full?.text ?? "loading…"}
       </div>
     </div>
