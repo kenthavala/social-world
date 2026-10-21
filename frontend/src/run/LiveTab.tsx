@@ -9,6 +9,7 @@ import { Spinner, StatusBadge } from "../common";
 import {
   chunkInfo, deriveStats, fetchChunk, initials, postOverallStance, subscribeChunks,
 } from "./helpers";
+import { hrefFor } from "../router";
 
 type Filter = "all" | "pro" | "neu" | "con";
 const PER_TICK_CAP = 12;
@@ -277,7 +278,7 @@ function PostCard({ p, newest, onCite, allPosts }: {
           <span className={stanceCls}><span className={sgCls} />{label}</span>
           {p.kind === "reply" && <span className="badge">reply</span>}
           {p.kind === "system" && <span className="badge">system</span>}
-          {p.is_fallback && <span className="badge s-warn">fallback</span>}
+          {Boolean(p.is_fallback) && <span className="badge s-warn">fallback</span>}
           <span className="post-persona ellipsis">@{p.handle ?? p.agent_id}</span>
           <span className="post-time"><span className="tk-n">T{String(p.tick).padStart(2, "0")}</span></span>
         </div>
@@ -312,14 +313,19 @@ function CiteChip({ chunkId, post, onOpen }: { chunkId: string; post: Post; onOp
   useEffect(() => subscribeChunks(() => force((x) => x + 1)), []);
   const info = chunkInfo(chunkId);
   const short = chunkId.length > 10 ? chunkId.slice(0, 10) : chunkId;
+  const pageLabel = info?.page != null
+    ? info.pageEnd != null && info.pageEnd !== info.page
+      ? `p. ${info.page}–${info.pageEnd}`
+      : `p. ${info.page}`
+    : null;
   return (
     <button
       className={`cite ${info && info.page == null && info.text == null ? "is-missing" : ""}`}
       onClick={() => onOpen(chunkId, post)}
-      aria-label={`Source ${chunkId}${info?.page != null ? `, page ${info.page}` : ""}`}
+      aria-label={`Source ${chunkId}${pageLabel ? `, ${pageLabel}` : ""}`}
     >
       <FileText className="ic-xs" aria-hidden />
-      {info?.page != null && <><span className="cite-p">p. {info.page}</span><span className="cite-sep">·</span></>}
+      {pageLabel && <><span className="cite-p">{pageLabel}</span><span className="cite-sep">·</span></>}
       <span>{short}</span>
     </button>
   );
@@ -501,7 +507,13 @@ function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError }: {
             <div className="flex flex-col gap-1 px-3 py-2.5" style={{ borderRight: "1px solid var(--line-1)" }}>
               <dt className="eyebrow">Page</dt>
               <dd className="stat-v-sm m-0">
-                {info?.page != null ? <>{info.page}{doc?.pages ? <span className="fg-3" style={{ fontWeight: 400 }}> / {doc.pages}</span> : null}</> : "—"}
+                {info?.page != null ? (
+                  <>
+                    {info.page}
+                    {info.pageEnd != null && info.pageEnd !== info.page ? `–${info.pageEnd}` : ""}
+                    {doc?.pages ? <span className="fg-3" style={{ fontWeight: 400 }}> / {doc.pages}</span> : null}
+                  </>
+                ) : "—"}
               </dd>
             </div>
             <div className="flex flex-col gap-1 px-3 py-2.5" style={{ borderRight: "1px solid var(--line-1)" }}>
@@ -525,7 +537,12 @@ function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError }: {
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <span className="eyebrow">Source text</span>
-              <span className="t-id">{info?.page != null ? `p. ${info.page} · ` : ""}{chunkId}</span>
+              <span className="t-id">
+                {info?.page != null
+                  ? `p. ${info.page}${info.pageEnd != null && info.pageEnd !== info.page ? `–${info.pageEnd}` : ""} · `
+                  : ""}
+                {chunkId}
+              </span>
             </div>
             {info === null ? (
               <div className="inset flex items-center gap-2 p-4"><Spinner label="Loading source text…" /></div>
@@ -587,7 +604,7 @@ function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError }: {
           </div>
         </div>
         <div className="drawer-foot">
-          <a className="btn" href="#/documents">
+          <a className="btn" href={hrefFor({ name: "documents", sourceId: run.source_id ?? undefined })}>
             Open in Documents
             <svg className="ic-sm" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 3.5 10.5 8 6 12.5" /></svg>
           </a>

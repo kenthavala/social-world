@@ -2,10 +2,11 @@
 // The active run gets the tick ruler; everything else is a clean library view.
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Upload } from "lucide-react";
-import type { Post, RunDetail, RunListItem, SourceStats } from "./types";
+import type { Post, Provider, RunDetail, RunListItem, SourceStats } from "./types";
 import * as api from "./api";
 import { Spinner, StatusBadge } from "./common";
-import { buildRuler, rulerSegs } from "./run/helpers";
+import { buildRuler, initials, postOverallStance, rulerSegs } from "./run/helpers";
+import { sourceBadgeClass, sourceStatusMeta } from "./status";
 
 const HOW = [
   ["01", "Source", "Upload a document"],
@@ -40,7 +41,8 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
   const [runs, setRuns] = useState<RunListItem[] | null>(null);
   const [docs, setDocs] = useState<SourceStats[] | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
-  const [model, setModel] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Provider[] | null>(null);
+  const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
   const [active, setActive] = useState<{ run: RunDetail; posts: Post[] } | null>(null);
 
   useEffect(() => {
@@ -50,8 +52,19 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
     });
     api.listSources().then((r) => setDocs(r.sources)).catch(() => setDocs([]));
     api.getHealth().then((h) => setProvider(h.provider)).catch(() => setProvider(null));
-    api.getSettings().then((r) => setModel(String(r.settings.llm_model ?? "") || null)).catch(() => undefined);
+    api.getSettings().then((r) => setSettings(r.settings)).catch(() => setSettings(null));
+    api.listProviders().then((r) => setProviders(r.providers)).catch(() => setProviders(null));
   }, [onError, settingsVersion]);
+
+  // Poll the run list while something is live, so Home never shows a stale tick.
+  const liveId = runs?.find((r) => ["running", "seeding", "paused"].includes(r.status))?.id ?? null;
+  useEffect(() => {
+    if (!liveId) return;
+    const t = window.setInterval(() => {
+      api.listRuns().then((r) => setRuns(r.runs)).catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(t);
+  }, [liveId]);
 
   // the active run: its real detail + posts for the tick ruler
   useEffect(() => {
@@ -76,8 +89,14 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
   }, [onNew]);
 
   const recentSims = runs?.slice(0, 5) ?? [];
-  const recentRuns = runs?.slice(0, 5) ?? [];
   const recentDocs = docs?.slice(0, 4) ?? [];
+  const model = String(settings?.llm_model ?? "") || null;
+  const currentProvider = providers?.find((p) => p.name === provider) ?? null;
+  const keyOk = provider === "mock" ? true : currentProvider ? currentProvider.has_key : null;
+  const rpm = settings?.llm_rpm;
+  const timeout = settings?.llm_timeout_seconds;
+  const latestPost = active && active.posts.length > 0 ? active.posts[active.posts.length - 1] : null;
+  const latestStance = latestPost ? postOverallStance(latestPost) : "neu";
   const activity = useMemo(
     () => (runs ?? []).slice(0, 5).map((r) => ({
       id: r.id, name: r.name, status: r.status, at: r.created_at,
@@ -85,12 +104,13 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
     })), [runs]);
 
   const totalTicks = active?.run.config?.ticks ?? 1;
-  const currentTick = active
-    ? Math.min(Math.max(active.run.current_tick || active.run.last_completed_tick || 1, 1), Math.max(1, totalTicks))
+  const rawTick = active ? (active.run.current_tick || active.run.last_completed_tick || 0) : 0;
+  const currentTick = active ? Math.min(Math.max(rawTick, 0), Math.max(1, totalTicks)) : 0;
+  // Only a run that has actually entered a tick gets the in-progress marker.
+  const rulerHighlight = active && rawTick > 0 && ["running", "seeding", "paused"].includes(active.run.status)
+    ? currentTick
     : 0;
-  const ruler = active
-    ? buildRuler(active.posts, totalTicks, ["running", "seeding", "paused"].includes(active.run.status) ? currentTick : 0)
-    : [];
+  const ruler = active ? buildRuler(active.posts, totalTicks, rulerHighlight) : [];
 
   const today = new Date().toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
@@ -193,6 +213,25 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
                 <div className="stat"><dt className="eyebrow">Budget</dt><dd className="stat-v m-0">{active.run.max_llm_calls ?? "—"}</dd></div>
               </dl>
             </div>
+            <div className="flex flex-wrap items-center gap-2.5 px-5 py-3" style={{ borderTop: "1px solid var(--line-1)" }}>
+              <span className="eyebrow">Latest</span>
+              {latestPost ? (
+                <>
+                  <span className={`av av-xs av-${latestStance}`} aria-hidden>{initials(latestPost.name, latestPost.handle)}</span>
+                  <span style={{ fontWeight: 600 }}>{latestPost.name ?? latestPost.agent_id}</span>
+                  <span className={`stance stance-${latestStance}`}>
+                    <span className={`sg sg-${latestStance}`} />
+                    {latestStance === "pro" ? "PRO" : latestStance === "con" ? "CON" : "NEUTRAL"}
+                  </span>
+                  <span className="t-body fg-2 ellipsis" style={{ flex: "1 1 280px", minWidth: 0 }}>
+                    “{latestPost.text}”
+                  </span>
+                  <span className="post-time"><span className="tk-n">T{String(latestPost.tick).padStart(2, "0")}</span></span>
+                </>
+              ) : (
+                <span className="t-meta">No posts yet — agents are seeding or waiting for the first tick.</span>
+              )}
+            </div>
           </section>
         )}
 
@@ -251,38 +290,6 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
               )}
             </section>
 
-            <section className="panel" aria-labelledby="recent-runs">
-              <div className="panel-head">
-                <h2 id="recent-runs" className="t-h3">Recent runs</h2>
-                <span className="t-meta">newest first</span>
-              </div>
-              {runs === null ? null : recentRuns.length === 0 ? (
-                <p className="t-meta panel-body">Runs appear here the moment you launch a simulation.</p>
-              ) : (
-                <div>
-                  {recentRuns.map((r) => (
-                    <button key={r.id} className="list-row" onClick={() => onOpen(r.id)} style={{ gap: 16 }}>
-                      <span className="hidden md:block" style={{ width: 108 }}>
-                        <StatusBadge status={r.status} />
-                      </span>
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="ellipsis" style={{ fontWeight: 500 }}>{r.name}</span>
-                        <span className="t-id">{r.id}</span>
-                      </span>
-                      <span className="mono num fg-2 hidden text-right sm:block" style={{ fontSize: 12, width: 56 }}>
-                        {r.ticks_done}/{r.ticks_total || "—"}
-                      </span>
-                      <span className="mono num fg-2 hidden text-right md:block" style={{ fontSize: 12, width: 80 }}>
-                        {r.llm_calls_used} calls
-                      </span>
-                      <span className="t-meta hidden text-right lg:block" style={{ width: 140 }}>
-                        {relTime(r.created_at)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
           </div>
 
           {/* right rail */}
@@ -291,18 +298,25 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
               <div className="panel-head">
                 <h2 id="provider-h" className="t-h3">Provider</h2>
                 {provider && (
-                  <span className={`status ${provider === "mock" ? "status-paused" : "status-completed"}`}>
-                    {provider === "mock" ? <span className="dot" /> : (
-                      <svg className="ic-xs" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 8.5 6.5 12 13 4.5" /></svg>
-                    )}
-                    {provider === "mock" ? "Mock" : "Connected"}
+                  <span className={`status ${provider === "mock" ? "status-paused" : keyOk === false ? "status-draft" : "status-queued"}`}>
+                    <span className="dot" />
+                    {provider === "mock" ? "Mock" : keyOk === false ? "No key" : "Configured"}
                   </span>
                 )}
               </div>
               <div className="panel-body flex flex-col gap-3">
                 <dl className="kv m-0" style={{ gridTemplateColumns: "76px minmax(0,1fr)" }}>
                   <dt>Provider</dt><dd>{provider ?? "checking…"}</dd>
-                  <dt>Model</dt><dd className="mono" style={{ fontSize: 12.5 }}>{model ?? "—"}</dd>
+                  <dt>Model</dt>
+                  <dd className="mono" style={{ fontSize: 12.5 }}>
+                    {provider === "mock" ? "not used by mock" : model ?? "—"}
+                  </dd>
+                  <dt>API key</dt>
+                  <dd>{provider === "mock" ? "not required" : keyOk === null ? "checking…" : keyOk ? "set" : "missing"}</dd>
+                  <dt>Rate</dt>
+                  <dd className="mono">{rpm != null && rpm !== "" ? `${rpm}/min` : "provider default"}</dd>
+                  <dt>Timeout</dt>
+                  <dd className="mono">{timeout != null ? `${timeout}s` : "—"}</dd>
                 </dl>
                 <a className="btn btn-sm self-start" href="#/settings">Provider settings</a>
               </div>
@@ -325,7 +339,13 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
                       <span className="flex min-w-0 flex-1 flex-col gap-1">
                         <span className="ellipsis" style={{ fontWeight: 500 }}>{d.filename}</span>
                         <span className="t-meta flex items-center gap-2">
-                          <span className={`badge ${["ready", "extracted"].includes(d.status) ? "s-ok" : ""}`} style={{ fontSize: 10 }}>{d.status}</span>
+                          <span
+                            className={`badge ${sourceBadgeClass(sourceStatusMeta(d.status).tone)}`}
+                            style={{ fontSize: 10 }}
+                            title={`${sourceStatusMeta(d.status).detail} Backend status: ${d.status}`}
+                          >
+                            {sourceStatusMeta(d.status).label}
+                          </span>
                           <span className="mono">
                             {d.pages} pp{d.chunks != null ? ` · ${d.chunks} chunks` : ""}
                           </span>

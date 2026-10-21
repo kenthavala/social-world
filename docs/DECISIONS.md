@@ -216,3 +216,52 @@
       cache hit makes a rewrite free (no new row, `from_cache` shown).
     - Failures are loud and leave the counted report untouched; no essay is
       stored. The same essay rides along in exports with its honesty label.
+
+## M4 continuation — finish, verify, polish
+
+27. **The source lifecycle has three states, and the UI maps them once.**
+    `app/api/sources.py` only ever writes `extracting`, `extracted` or `failed`.
+    "ready" was never a backend source state; treating it as one produced badges
+    that stayed "ingesting" forever. `frontend/src/status.ts` is now the single
+    mapping: `extracted → Ready` (success), `extracting → Extracting` (live),
+    `failed → Failed`; the raw backend value remains visible in the detail view.
+    The wizard gates "next" on `usable`, shows extraction errors, and reuses a
+    stored brief. A re-upload of the same sha now reuses a failed row instead of
+    tripping the UNIQUE constraint (regression test `test_reupload_failed_source_recovers_in_place`).
+
+28. **Task-specific output budgets — and a real plumbing bug fixed.**
+    Persona batches and the essay are long-form; a 1200-token cap truncated valid
+    JSON on verbose models (`finish=length` at 1200 in a real NVIDIA run). `_send`
+    now budgets persona/essay at 2× the configured cap and a repair after a
+    truncated answer gets a further 2× (capped at 4000). Critically, `_http_call`
+    used to recompute `max_tokens` from config, silently discarding the doubling
+    for both wire formats; it now receives the computed budget. Covered by
+    `test_long_form_tasks_get_a_bigger_output_budget` and
+    `test_repair_after_truncation_doubles_the_budget` (suite now 76 tests).
+
+29. **Slow providers are tuned operationally, not hidden.**
+    The configured NVIDIA NIM model (`z-ai/glm-5.3-flash`) was measured at
+    155 s / 171 s for persona batches, 101 s / 113 s for write batches and ~217 s
+    for a full brief (one 180 s timeout then success). With the old 90 s timeout
+    the brief produced ReadTimeouts and the gateway fell back. The live settings
+    now use Timeout = 180 s and Max tokens = 2000. Every attempt stays in
+    `llm_calls`; a slow call is not reported as a system failure, and a fallback
+    is labeled as a fallback.
+
+30. **Provider status is configuration, not a health claim.**
+    The shell/provier card says `configured` / `no key` (or `mock`) instead of
+    "connected"; only the Settings **Test connection** button performs a live
+    check and reports auth/model/JSON/latency. The run health tile is compact and
+    honest by state: `live` only while an active run's SSE stream is connected,
+    `retry` while reconnecting, `paused`, `stopped`, `error`, and `done` for a
+    finished run (never "streaming" after completion). The tick ruler only marks
+    an in-progress tick when the run has actually entered one (draft/seeding shows
+    00).
+
+31. **Evidence is one click from post to page.**
+    `GET /api/sources/{id}` now carries the stored brief, so revisiting a document
+    never pays for regeneration. Documents and the wizard accept deep links
+    (`#/documents?source=…`, `#/new?source=…`), the evidence drawer opens the exact
+    source document, and run creation rejects a source that is not `extracted`.
+    Chunk listings include per-chunk citation counts plus the source's chunk/word
+    totals; failed rows surface their `error` instead of looking merely "not ready".

@@ -30,7 +30,14 @@ def _now() -> str:
 
 
 def extract_text_document(data: bytes, name: str) -> dict:
-    """Shared ingest pipeline used by the upload endpoint and by tests."""
+    """Shared ingest pipeline used by the upload endpoint and by tests.
+
+    Source lifecycle (the only real states in the database):
+      extracting -> extracted    success; text, chunks and page bounds exist
+      extracting -> failed       extraction/cleaning/chunking failed; `error` explains
+    A re-upload of the same sha reuses the existing row: an extracted document is
+    deduplicated, a failed/interrupted one is re-ingested in place.
+    """
     suffix = Path(name).suffix.lower()
     if suffix not in ALLOWED:
         raise AppError(f"unsupported file type '{suffix or '(none)'}' (use .pdf .txt .md .docx)",
@@ -39,12 +46,14 @@ def extract_text_document(data: bytes, name: str) -> dict:
         raise AppError(f"file exceeds the {config.max_upload_mb} MB limit",
                        component="api", stage="upload")
     sha = hashlib.sha256(data).hexdigest()
-    existing = db.query_one("SELECT * FROM sources WHERE sha256=?", (sha,))
+    existing = db.query_one("SELECT id, status FROM sources WHERE sha256=?", (sha,))
     if existing is not None and existing["status"] == "extracted":
         stats = _source_stats(existing["id"])
         stats["deduplicated"] = True
         return stats
-    return _ingest_new(data, name, sha)
+    # Reuse the row that owns this sha (a previous attempt failed or was interrupted);
+    # inserting again would trip the UNIQUE(sha256) constraint.
+    return _ingest_new(data, name, sha, existing_id=existing["id"] if existing else None)
 
 
 async def upload_source(
@@ -65,17 +74,25 @@ async def upload_source(
     return extract_text_document(data, name)
 
 
-def _ingest_new(data: bytes, name: str, sha: str) -> dict:
+def _ingest_new(data: bytes, name: str, sha: str, existing_id: Optional[str] = None) -> dict:
     suffix = Path(name).suffix.lower()
-    source_id = "src_" + uuid.uuid4().hex[:10]
+    source_id = existing_id or "src_" + uuid.uuid4().hex[:10]
     dest = DATA_DIR / "uploads" / source_id
     dest.mkdir(parents=True, exist_ok=True)
     (dest / f"original{suffix}").write_bytes(data)
 
-    db.execute(
-        "INSERT INTO sources(id, filename, sha256, kind, pages, created_at, status, brief_json, error)"
-        " VALUES(?,?,?,?,?,?,?,?,?)",
-        (source_id, name, sha, "file", 0, _now(), "extracting", None, None))
+    if existing_id:
+        # Retry of a failed/interrupted attempt: clear the old extraction in place.
+        db.execute("DELETE FROM chunks WHERE source_id=?", (source_id,))
+        db.execute(
+            "UPDATE sources SET filename=?, kind='file', pages=0, status='extracting',"
+            " brief_json=NULL, error=NULL WHERE id=?",
+            (name, source_id))
+    else:
+        db.execute(
+            "INSERT INTO sources(id, filename, sha256, kind, pages, created_at, status, brief_json, error)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (source_id, name, sha, "file", 0, _now(), "extracting", None, None))
     try:
         extracted = extract_mod.extract(data, name, max_pages=config.max_pages)
     except Exception as e:
@@ -126,7 +143,11 @@ def _source_stats(source_id: str) -> dict:
                       (source_id,)) or 0
     return {"source_id": source_id, "filename": row["filename"], "kind": row["kind"],
             "pages": row["pages"], "chunks": n_chunks, "words": words,
-            "status": row["status"], "error": row["error"], "has_brief": bool(row["brief_json"])}
+            "status": row["status"], "error": row["error"],
+            "has_brief": bool(row["brief_json"]),
+            # the stored brief travels with the detail so the wizard can reuse it
+            # instead of paying for a regeneration on every visit
+            "brief": db.uj(row["brief_json"]) if row["brief_json"] else None}
 
 
 @router.post("/sources")
@@ -141,9 +162,12 @@ async def upload(
 @router.get("/sources")
 def list_sources() -> dict:
     rows = db.query(
-        "SELECT id, filename, status, pages, created_at, brief_json FROM sources"
-        " ORDER BY created_at DESC LIMIT 200")
-    return {"sources": [dict(r) | {"has_brief": bool(r["brief_json"])} for r in rows]}
+        "SELECT s.id, s.filename, s.status, s.pages, s.created_at, s.brief_json,"
+        " (SELECT COUNT(*) FROM chunks c WHERE c.source_id=s.id) AS chunks,"
+        " (SELECT COALESCE(SUM(c.n_words),0) FROM chunks c WHERE c.source_id=s.id) AS words"
+        " FROM sources s ORDER BY s.created_at DESC LIMIT 200")
+    return {"sources": [{k: v for k, v in dict(r).items() if k != "brief_json"}
+                        | {"has_brief": bool(r["brief_json"])} for r in rows]}
 
 
 @router.get("/sources/{source_id}")

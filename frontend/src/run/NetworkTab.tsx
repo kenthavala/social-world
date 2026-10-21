@@ -61,7 +61,35 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError }: {
     () => (graph?.edges ?? []).filter((e) => e.src === sel || e.dst === sel),
     [graph, sel]);
 
+  // Focus mode: selecting a node dims everything outside its recorded neighbourhood.
+  const neighbours = useMemo(() => {
+    if (!sel) return null;
+    const ids = new Set<string>([sel]);
+    for (const e of graph?.edges ?? []) {
+      if (e.src === sel) ids.add(e.dst);
+      if (e.dst === sel) ids.add(e.src);
+    }
+    return ids;
+  }, [graph, sel]);
+
   if (!graph) return <Spinner label="Building network…" />;
+  if (graph.nodes.length === 0) {
+    return (
+      <div className="empty panel">
+        <span className="empty-ic">
+          <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+            <circle cx="4" cy="8" r="2" /><circle cx="12" cy="4" r="2" /><circle cx="12" cy="12" r="2" />
+            <path d="M6 7l4-2M6 9l4 2" />
+          </svg>
+        </span>
+        <p className="t-h3">No network yet</p>
+        <p className="t-meta" style={{ maxWidth: 340 }}>
+          The follow graph is built from relationships the engine records during the run.
+          Start the simulation to seed agents and connections.
+        </p>
+      </div>
+    );
+  }
 
   const maxTick = ticks;
   const resetView = () => fgRef.current?.zoomToFit(400, 60);
@@ -73,6 +101,11 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError }: {
           <h2 className="t-h3">Follow graph</h2>
           <div className="flex items-center gap-2">
             <span className="badge">{tick === null ? "LATEST" : `TICK ${String(tick).padStart(2, "0")}`}</span>
+            {tick !== null && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setTick(null)} title="Back to the latest state">
+                Latest
+              </button>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={resetView} title="Fit the graph to the view">
               <Maximize2 size={13} /> Reset view
             </button>
@@ -100,6 +133,7 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError }: {
               nodeCanvasObjectMode={() => "replace" as never}
               nodeCanvasObject={((node: NetNode & { x?: number; y?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                 const r = Math.max(2.6, 2.2 + node.val * 0.9);
+                ctx.globalAlpha = neighbours && !neighbours.has(node.id) ? 0.16 : 1;
                 ctx.beginPath();
                 ctx.arc(node.x ?? 0, node.y ?? 0, r / globalScale, 0, 2 * Math.PI);
                 ctx.fillStyle = node.color;
@@ -115,14 +149,20 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError }: {
                   ctx.textAlign = "center";
                   ctx.fillText(node.handle ?? "", node.x ?? 0, (node.y ?? 0) + r / globalScale + 5 / globalScale);
                 }
+                ctx.globalAlpha = 1;
               }) as never}
               onNodeClick={((n: NetNode) => setSel((cur) => (cur === (n as GraphNode).id ? null : (n as GraphNode).id))) as never}
               linkWidth={((l: NetLink) => 0.4 + Math.max(0, l.weight) * 2.2) as never}
-              linkColor={() => LINK_COLOR}
-              linkDirectionalParticles={2}
+              linkColor={((l: NetLink) => {
+                if (!neighbours) return LINK_COLOR;
+                const src = typeof l.source === "object" ? (l.source as NetNode).id : l.source;
+                const dst = typeof l.target === "object" ? (l.target as NetNode).id : l.target;
+                return src === sel || dst === sel ? LINK_COLOR : "rgba(141,153,170,0.10)";
+              }) as never}
+              linkDirectionalParticles={links.length > 300 ? 0 : 2}
               linkDirectionalParticleWidth={1.2}
               width={canvasW}
-              height={480}
+              height={canvasW < 520 ? 360 : 480}
               backgroundColor="rgba(0,0,0,0)"
               onEngineStop={() => { fgRef.current?.zoomToFit(400, 60); }}
               cooldownTicks={120}

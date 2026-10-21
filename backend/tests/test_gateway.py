@@ -1,6 +1,8 @@
 """Gateway reliability: retries, 429/Retry-After, 401, fallback, budget, cache, redaction."""
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -112,6 +114,51 @@ async def test_garbage_exactly_one_repair(fresh_db, fast_gateway, monkeypatch):
     result = await fast_gateway.complete("test", _user_msg("hi"), no_cache=True)
     assert result.parsed == {"fixed": True}
     assert route.call_count == 2  # original + exactly one repair
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_long_form_tasks_get_a_bigger_output_budget(fresh_db, fast_gateway, monkeypatch):
+    """Persona/essay used to truncate valid JSON at the 1200-token cap."""
+    _custom_env(monkeypatch, "https://gwbudget.test/v1", **{"LLM_MAX_TOKENS": "1200"})
+    bodies: list[dict] = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"ok": true, "n": 7}'},
+                         "finish_reason": "stop"}], "usage": {}, "model": "m-1"})
+
+    respx.post("https://gwbudget.test/v1/chat/completions").mock(side_effect=handler)
+    await fast_gateway.complete("write", _user_msg("hi"), no_cache=True)
+    await fast_gateway.complete("persona", _user_msg("hi"), no_cache=True)
+    await fast_gateway.complete("essay", _user_msg("hi"), no_cache=True)
+    assert bodies[0]["max_tokens"] == 1200
+    assert bodies[1]["max_tokens"] == 2400
+    assert bodies[2]["max_tokens"] == 2400
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_repair_after_truncation_doubles_the_budget(fresh_db, fast_gateway, monkeypatch):
+    """finish=length + invalid JSON must not repeat the same truncated budget."""
+    _custom_env(monkeypatch, "https://gwtrunc.test/v1", **{"LLM_MAX_TOKENS": "1200"})
+    bodies: list[dict] = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        if len(bodies) == 1:
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"truncated": '},
+                             "finish_reason": "length"}], "usage": {}, "model": "m-1"})
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"ok": true}'},
+                         "finish_reason": "stop"}], "usage": {}, "model": "m-1"})
+
+    respx.post("https://gwtrunc.test/v1/chat/completions").mock(side_effect=handler)
+    result = await fast_gateway.complete("write", _user_msg("hi"), no_cache=True)
+    assert result.parsed == {"ok": True}
+    assert [b["max_tokens"] for b in bodies] == [1200, 2400]
 
 
 @pytest.mark.asyncio

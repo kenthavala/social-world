@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { Route } from "./router";
 import { hrefFor } from "./router";
 import * as api from "./api";
-import type { RunListItem } from "./types";
+import type { Provider, RunListItem } from "./types";
 
 export type { Route };
 
@@ -99,16 +99,18 @@ interface ShellState {
   provider: string | null;
   model: string | null;
   keysOk: boolean;
+  providers: Provider[];
 }
 
 export function Shell({ route, children }: { route: Route; children: React.ReactNode }) {
-  const [state, setState] = useState<ShellState>({ sims: [], docs: null, provider: null, model: null, keysOk: false });
+  const [state, setState] = useState<ShellState>({ sims: [], docs: null, provider: null, model: null, keysOk: false, providers: [] });
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
     api.listRuns().then((r) => setState((s) => ({ ...s, sims: r.runs }))).catch(() => undefined);
     api.listSources().then((r) => setState((s) => ({ ...s, docs: r.sources.length }))).catch(() => undefined);
     api.getHealth().then((h) => setState((s) => ({ ...s, provider: h.provider || null }))).catch(() => undefined);
+    api.listProviders().then((r) => setState((s) => ({ ...s, providers: r.providers }))).catch(() => undefined);
     api.getSettings().then((r) => {
       const model = String(r.settings.llm_model ?? "");
       const keys = (r.settings.keys ?? {}) as Record<string, boolean>;
@@ -119,6 +121,15 @@ export function Shell({ route, children }: { route: Route; children: React.React
   const isMobileLayout = useIsMobile();
   const activeRun = state.sims.find((r) => ["running", "seeding", "paused"].includes(r.status)) ?? null;
 
+  // Keep the sidebar's active-run tick/status fresh while a run is live.
+  useEffect(() => {
+    if (!activeRun) return;
+    const t = window.setInterval(() => {
+      api.listRuns().then((r) => setState((s) => ({ ...s, sims: r.runs }))).catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(t);
+  }, [activeRun?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const navItems = [
     { name: "home", label: "Home", icon: <HomeIcon />, href: "#/", count: null as number | null },
     { name: "simulations", label: "Simulations", icon: <SimIcon />, href: "#/simulations", count: state.sims.length || null },
@@ -126,9 +137,17 @@ export function Shell({ route, children }: { route: Route; children: React.React
     { name: "settings", label: "Settings", icon: <SettingsIcon />, href: "#/settings", count: null },
   ];
 
+  const currentProvider = state.providers.find((p) => p.name === state.provider) ?? null;
+  const keyOk = state.provider === "mock" ? true : currentProvider ? currentProvider.has_key : null;
   const providerLabel = state.provider === "mock" ? "mock provider"
-    : state.provider ? `${state.provider} · connected` : "checking…";
-  const providerDot = state.provider === "mock" ? "dot dot-warn" : state.provider ? "dot dot-ok" : "dot dot-idle";
+    : state.provider
+      ? `${state.provider} · ${keyOk === false ? "no key" : "configured"}`
+      : "checking…";
+  const providerDot = state.provider === "mock"
+    ? "dot dot-warn"
+    : state.provider
+      ? keyOk === false ? "dot dot-warn" : "dot dot-ok"
+      : "dot dot-idle";
 
   if (isMobileLayout) {
     return (
@@ -206,7 +225,11 @@ export function Shell({ route, children }: { route: Route; children: React.React
             <span className={providerDot} style={{ marginTop: 6 }} />
             <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
               <span>{providerLabel}</span>
-              {state.model && <span className="t-id ellipsis" style={{ maxWidth: 170 }}>{state.model}{!state.keysOk && state.provider !== "mock" ? " · no key" : ""}</span>}
+              {state.provider !== "mock" && state.model && (
+                <span className="t-id ellipsis" style={{ maxWidth: 170 }}>
+                  {state.model}{keyOk === false ? " · no key" : ""}
+                </span>
+              )}
             </span>
           </a>
           <button className="btn btn-ghost btn-sm" onClick={toggle} style={{ justifyContent: "flex-start", paddingLeft: 10 }} aria-label="Toggle colour theme">

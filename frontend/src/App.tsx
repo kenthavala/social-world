@@ -68,12 +68,15 @@ export default function App() {
         {route.name === "simulations" && (
           <SimulationsPage onOpen={openRun} onNew={() => navigate({ name: "wizard" })} onError={setErr} />
         )}
-        {route.name === "documents" && <DocumentsPage onError={setErr} />}
+        {route.name === "documents" && (
+          <DocumentsPage onError={setErr} initialSource={route.sourceId} />
+        )}
         {route.name === "settings" && (
           <SettingsPage onSaved={() => setSettingsVersion((v) => v + 1)} onError={setErr} />
         )}
         {route.name === "wizard" && (
-          <Wizard onDone={openRun} onCancel={goHome} onError={setErr} />
+          <Wizard onDone={openRun} onCancel={goHome} onError={setErr}
+                  initialSource={route.sourceId} />
         )}
         {route.name === "run" && (
           <RunPage runId={route.runId} onBack={goHome} onError={setErr} />

@@ -66,6 +66,17 @@ LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
 OPENROUTER_API_KEY=sk-or-...
 ```
 
+**Slow providers.** NVIDIA NIM has been measured at roughly 100–180 s per real call
+(persona batches ~155–171 s, write batches ~100–113 s). The 90 s default timeout is too
+tight for larger prompts: set **Settings → Timeout (seconds) = 180** and **Max tokens = 2000**
+for this provider. The gateway retries timeouts and records every attempt.
+
+**Status vocabulary (backend → UI).** Sources move `extracting → extracted` or
+`extracting → failed`; the UI labels `extracted` as **Ready** (text, chunks and page bounds
+exist) and shows the raw backend state in detail views. Runs move
+`draft/ready → seeding → running → paused/interrupted → completed/failed`.
+Re-uploading a failed document reuses its row instead of colliding on the content hash.
+
 ## Tests
 
 ```
@@ -73,7 +84,7 @@ cd backend
 ..\.venv\Scripts\python.exe -m pytest tests
 ```
 
-70 tests: ingest (extraction/cleaning/chunking/BM25), tolerant JSON parsing,
+76 tests: ingest (extraction/cleaning/chunking/BM25), tolerant JSON parsing,
 wire adapters (respx), gateway retries/fallback/budget/cache, opinion/memory/
 relations formulas, partisanship seeding, engine determinism (same seed +
 writes=0 → identical log), crash→interrupted→resume without duplicates,
@@ -101,9 +112,9 @@ backend/app
   analytics/  metrics · network · report
   api/        sources · runs · stream · settings · providers · export
 frontend/src   App · shell · router · HomePage · Wizard · DocumentsPage ·
-               SettingsPage · run/ (RunShell, Overview, Feed, Agents,
-               Network, Events, Insights, Log tabs) · api.ts · hooks · types
-docs/          MASTER_BUILD_PROMPT · DECISIONS · KNOWN_LIMITS · M2_REPORT
+               SettingsPage · run/ (RunShell, Live, Agents, Network,
+               Events, Analysis, Log tabs) · api.ts · hooks · types
+docs/          MASTER_BUILD_PROMPT · DECISIONS · KNOWN_LIMITS · M2_REPORT · M4_REPORT
 ```
 
 See `docs/M2_REPORT.md` for the M2/M3 turn-by-turn record and

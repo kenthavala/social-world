@@ -54,11 +54,24 @@ export default function SettingsPage({ onSaved, onError }: {
       const numeric = new Set(["llm_temperature", "llm_max_tokens", "llm_timeout_seconds", "llm_rpm", "llm_concurrency"]);
       const payload: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(form)) {
-        if (v === "") continue;
-        payload[k] = numeric.has(k) ? Number(v) : k === "llm_cache" || k === "llm_replay" ? v === "true" : v;
+        if (numeric.has(k)) {
+          if (v === "") {
+            // blank numeric fields keep their current stored value, except RPM where
+            // blank means "use the provider preset default"
+            if (k === "llm_rpm") payload[k] = null;
+            continue;
+          }
+          payload[k] = Number(v);
+        } else if (k === "llm_cache" || k === "llm_replay") {
+          payload[k] = v === "true";
+        } else {
+          // empty strings are meaningful here: they clear optional text fields
+          payload[k] = v;
+        }
       }
       await api.saveSettings(payload, Object.keys(keys).length ? keys : undefined);
-      const s = await api.getSettings();
+      const [s, p] = await Promise.all([api.getSettings(), api.listProviders()]);
+      setProviders(p.providers);
       setSettings(s);
       setForm(Object.fromEntries(Object.entries(s.settings).map(([k, v]) => [k, String(v ?? "")])));
       setKeys({});
@@ -242,6 +255,11 @@ export default function SettingsPage({ onSaved, onError }: {
                 <span className="label">Max tokens</span>
                 <input className="input" type="number" value={field("llm_max_tokens")}
                        onChange={(e) => setField("llm_max_tokens", e.target.value)} />
+              </label>
+              <label className="field">
+                <span className="label">Timeout (seconds)</span>
+                <input className="input" type="number" min="10" max="600" value={field("llm_timeout_seconds")}
+                       onChange={(e) => setField("llm_timeout_seconds", e.target.value)} />
               </label>
               <label className="field">
                 <span className="label">Requests / min</span>

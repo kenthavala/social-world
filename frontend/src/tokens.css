@@ -81,8 +81,11 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* light-mode token overrides (values from the design reference) */
+/* light-mode token overrides (values from the design reference).
+   The shell element also re-declares the dark tokens on `.mo`, so it must be
+   included here: the theme class lives on <html>, not on the shell. */
 :root.light,
+:root.light .mo,
 .mo.light {
   --bg-0: #F3F4F6; --bg-1: #FFFFFF; --bg-2: #F7F8FA; --bg-3: #EDEFF2; --bg-4: #E3E6EA;
   --bg-hover: rgba(18, 21, 26, 0.025);

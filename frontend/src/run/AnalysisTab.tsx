@@ -247,19 +247,21 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
             <span className="t-meta">−1 oppose … +1 support</span>
           </div>
           <div className="panel-body">
-            {stanceSeries.length > 1 ? (
+            {stanceSeries.length > 0 ? (
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={stanceSeries}>
                   <CartesianGrid stroke="var(--line-1)" strokeDasharray="3 3" />
                   <XAxis dataKey="tick" stroke="var(--fg-3)" fontSize={11} />
                   <YAxis domain={[-1, 1]} stroke="var(--fg-3)" fontSize={11} ticks={[-1, -0.5, 0, 0.5, 1]} />
                   <Tooltip contentStyle={{ background: "var(--bg-1)", border: "1px solid var(--line-2)", borderRadius: 6, fontSize: 12 }} />
-                  {Object.keys(metrics?.stance_by_issue ?? {}).map((issue, i) => (
-                    <Area key={issue} type="monotone" dataKey={issue}
-                          stroke={i === 0 ? "var(--accent)" : i === 1 ? "var(--evt)" : "var(--neu)"}
-                          fill={i === 0 ? "var(--accent)" : i === 1 ? "var(--evt)" : "var(--neu)"}
-                          fillOpacity={0.12} strokeWidth={2} />
-                  ))}
+                  {Object.keys(metrics?.stance_by_issue ?? {}).map((issue, i) => {
+                    const color = i === 0 ? "var(--accent)" : i === 1 ? "var(--accent-fg)" : "var(--neu)";
+                    return (
+                      <Area key={issue} type="monotone" dataKey={issue}
+                            stroke={color} fill={color}
+                            fillOpacity={0.12} strokeWidth={2} />
+                    );
+                  })}
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
@@ -274,13 +276,13 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
             <span className="t-meta">likes + reposts + follows recorded</span>
           </div>
           <div className="panel-body">
-            {engSeries.length > 1 && engSeries.some((e) => e.engagement > 0) ? (
+            {engSeries.length > 0 && engSeries.some((e) => e.engagement > 0) ? (
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={engSeries}>
                   <CartesianGrid stroke="var(--line-1)" strokeDasharray="3 3" />
                   <XAxis dataKey="tick" stroke="var(--fg-3)" fontSize={11} />
                   <Tooltip contentStyle={{ background: "var(--bg-1)", border: "1px solid var(--line-2)", borderRadius: 6, fontSize: 12 }} />
-                  <Area type="monotone" dataKey="engagement" stroke="var(--evt)" fill="var(--evt)" fillOpacity={0.12} strokeWidth={2} />
+                  <Area type="monotone" dataKey="engagement" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.12} strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (

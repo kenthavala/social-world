@@ -25,8 +25,9 @@ export function useRunStream(runId: string | null, onEvent: (e: SseEvent) => voi
       handler.current({ event: eventName, data });
     };
     const kinds = [
-      "open", "run_status", "seeding", "tick_started", "tick_completed",
-      "post", "reaction", "relation", "warning", "waiting", "opinion", "reflection", "error",
+      "open", "run_status", "stage", "seeding", "tick_started", "tick_completed",
+      "post_created", "post", "reaction", "relation", "event", "llm_call",
+      "stance_tick", "warning", "waiting", "opinion", "reflection", "error",
     ];
     const listeners = kinds.map((k) => {
       const fn = makeListener(k);

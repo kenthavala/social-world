@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, FileText, LayoutGrid, LibraryBig, Upload, Wand2, X } from "lucide-react";
 import type { EstimateResponse, RunDetail, SourceStats, WorldBrief } from "./types";
 import * as api from "./api";
 import { Spinner } from "./common";
+import { sourceStatusMeta, sourceStatusPill } from "./status";
 
 const STEPS = [
   { n: 1, label: "Source" },
@@ -19,10 +20,11 @@ const PRESETS = [
 
 interface LibDoc { id?: string; source_id?: string; filename: string; status: string; pages?: number | null; }
 
-export default function Wizard({ onDone, onCancel, onError }: {
+export default function Wizard({ onDone, onCancel, onError, initialSource }: {
   onDone: (runId: string) => void;
   onCancel: () => void;
   onError: (e: unknown) => void;
+  initialSource?: string;
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
@@ -45,29 +47,64 @@ export default function Wizard({ onDone, onCancel, onError }: {
     agents: number; ticks: number; writesPerTick: number; seed: number; preset: string;
   }>;
 
-  useEffect(() => {
-    // restore draft once on mount
-    try {
-      const raw = localStorage.getItem(DKEY);
-      if (raw && !source) {
-        const d: Draft = JSON.parse(raw);
-        if (d.step) setStep(Math.min(4, Math.max(1, d.step)));
-        if (d.name) setName(d.name);
-        if (d.scenario) setScenario(d.scenario);
-        if (d.agents) setAgents(d.agents);
-        if (d.ticks) setTicks(d.ticks);
-        if (d.writesPerTick !== undefined) setWritesPerTick(d.writesPerTick);
-        if (d.seed) setSeed(d.seed);
-        if (d.preset) setPreset(d.preset);
-        if (d.sourceId) {
-          api.getSource(d.sourceId).then(setSource).catch(() => setSource(null));
-        }
-      }
-    } catch { /* corrupted draft — ignore */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const restoredRef = useRef(false);
 
   useEffect(() => {
+    // A source chosen elsewhere (Documents → New simulation) wins over the draft;
+    // otherwise restore the autosaved draft once on mount. The stored brief travels
+    // with the source detail, so revisiting a document never costs another LLM call.
+    let cancelled = false;
+    async function hydrate() {
+      let draft: Draft | null = null;
+      try {
+        const raw = localStorage.getItem(DKEY);
+        if (raw) draft = JSON.parse(raw) as Draft;
+      } catch { /* corrupted draft — ignore */ }
+
+      if (initialSource) {
+        try {
+          const stats = await api.getSource(initialSource);
+          if (!cancelled) {
+            setSource(stats);
+            if (stats.brief) setBrief(stats.brief);
+          }
+        } catch {
+          if (!cancelled) setSource(null);
+        }
+        if (!cancelled) restoredRef.current = true;
+        return;
+      }
+
+      if (draft) {
+        if (draft.step) setStep(Math.min(4, Math.max(1, draft.step)));
+        if (draft.name) setName(draft.name);
+        if (draft.scenario) setScenario(draft.scenario);
+        if (draft.agents) setAgents(draft.agents);
+        if (draft.ticks) setTicks(draft.ticks);
+        if (draft.writesPerTick !== undefined) setWritesPerTick(draft.writesPerTick);
+        if (draft.seed) setSeed(draft.seed);
+        if (draft.preset) setPreset(draft.preset);
+        if (draft.sourceId) {
+          try {
+            const stats = await api.getSource(draft.sourceId);
+            if (!cancelled) {
+              setSource(stats);
+              if (stats.brief) setBrief(stats.brief);
+            }
+          } catch {
+            if (!cancelled) setSource(null);
+          }
+        }
+      }
+      if (!cancelled) restoredRef.current = true;
+    }
+    void hydrate();
+    return () => { cancelled = true; };
+  }, [initialSource]);
+
+  useEffect(() => {
+    // Never clobber a draft before the async restore has had a chance to read it.
+    if (!restoredRef.current) return;
     const d: Draft = {
       step, sourceId: source?.source_id, name, scenario,
       agents, ticks, writesPerTick, seed, preset,
@@ -92,6 +129,7 @@ export default function Wizard({ onDone, onCancel, onError }: {
     try {
       const stats = file ? await api.uploadSource(file!) : await api.uploadSourceText(text!);
       setSource(stats);
+      if (stats.brief) setBrief(stats.brief);
     } catch (e) {
       onError(e);
     } finally {
@@ -105,6 +143,7 @@ export default function Wizard({ onDone, onCancel, onError }: {
     try {
       const stats = await api.getSource(sid);
       setSource(stats);
+      if (stats.brief) setBrief(stats.brief);
     } catch (e) {
       onError(e);
     }
@@ -279,6 +318,7 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
   const [pasted, setPasted] = useState("");
   const [lib, setLib] = useState<LibDoc[] | null>(null);
   const [drag, setDrag] = useState(false);
+  const meta = source ? sourceStatusMeta(source.status) : null;
 
   useEffect(() => {
     api.listSources().then((r) => setLib(((r.sources || []) as unknown) as LibDoc[]))
@@ -322,17 +362,27 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
         <div className="mt-4">
           <div className="eyebrow mb-2 flex items-center gap-1.5"><LibraryBig size={12} /> Choose from library</div>
           <div className="flex flex-wrap gap-2">
-            {lib.map((d) => {
+            {lib.slice(0, 12).map((d) => {
               const id = d.id ?? d.source_id ?? "";
+              const docMeta = sourceStatusMeta(d.status);
               return (
-                <button key={id} onClick={() => onChoose(d)} className="chip" title={id}>
+                <button key={id} onClick={() => onChoose(d)} className="chip"
+                        title={`${id} — ${docMeta.label}. ${docMeta.detail}`}
+                        style={{ opacity: docMeta.usable ? 1 : 0.62 }}>
                   <LayoutGrid size={11} />
                   {d.filename}
-                  {d.pages != null && <span className="chip-n">{d.pages} pp</span>}
+                  <span className="chip-n">
+                    {d.pages != null ? `${d.pages} pp · ` : ""}{docMeta.label}
+                  </span>
                 </button>
               );
             })}
           </div>
+          {lib.length > 12 && (
+            <p className="t-meta mt-2">
+              {lib.length - 12} more in <a className="kbd-link" href="#/documents">Documents</a>.
+            </p>
+          )}
         </div>
       )}
 
@@ -356,26 +406,43 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
           <div className="flex flex-wrap items-center gap-2">
             <FileText size={14} style={{ color: "var(--fg-3)" }} />
             <span style={{ fontWeight: 500 }}>{source.filename}</span>
-            <span className={`status ${source.status === "ready" ? "status-ready" : "status-ingesting"}`}>
-              {source.status === "ready" ? (
+            <span className={`status ${meta ? sourceStatusPill(meta.tone) : "status-queued"}`}
+                  title={meta ? `${meta.detail} Raw backend status: ${source.status}` : undefined}>
+              {meta?.tone === "ok" ? (
                 <svg className="ic-xs" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 8.5 6.5 12 13 4.5" /></svg>
-              ) : <span className="dot dot-pulse" />}
-              {source.status}
+              ) : meta?.tone === "err" ? (
+                <svg className="ic-xs" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 4l8 8M12 4l-8 8" /></svg>
+              ) : <span className={`dot${meta?.live ? " dot-pulse" : ""}`} />}
+              {meta?.label ?? source.status}
             </span>
           </div>
           <dl className="kv mt-3" style={{ gridTemplateColumns: "96px minmax(0,1fr)", gap: "8px 12px", fontSize: 12.5 }}>
             <dt>Pages</dt><dd className="mono">{source.pages}</dd>
             <dt>Source chunks</dt><dd className="mono">{source.chunks}</dd>
             <dt>Words</dt><dd className="mono">{source.words.toLocaleString()}</dd>
-            <dt>Brief</dt><dd>{source.has_brief ? "generated — continue to review" : "not yet generated (next step)"}</dd>
+            <dt>Brief</dt><dd>{source.has_brief ? "stored brief loaded — review on the next step" : "not yet generated (next step)"}</dd>
           </dl>
           {source.deduplicated && <p className="t-meta mt-2">This document was already uploaded — the existing extraction was reused.</p>}
+          {source.error && (
+            <div className="banner banner-err mt-3" role="alert">
+              <span>{source.error}</span>
+            </div>
+          )}
+          {meta && !meta.usable && (
+            <p className="t-meta mt-2">
+              {meta.live
+                ? "Extraction is still running — wait for it to finish before continuing."
+                : "This document cannot be used until it is re-uploaded."}
+            </p>
+          )}
           <p className="t-meta mt-2">
-            Inspect the extracted chunks any time in <a className="kbd-link" href="#/documents">Documents</a>.
+            Inspect the extracted chunks any time in{" "}
+            <a className="kbd-link" href={source ? `#/documents?source=${encodeURIComponent(source.source_id)}` : "#/documents"}>Documents</a>.
           </p>
         </div>
       )}
-      <Nav nextLabel="Write the brief" onNext={source ? onNext : undefined} busy={busy} />
+      <Nav nextLabel={source?.has_brief ? "Review the brief" : "Write the brief"}
+           onNext={source && meta?.usable ? onNext : undefined} busy={busy} />
     </div>
   );
 }
@@ -580,6 +647,17 @@ function StepRun(p: {
   onLaunch: () => void;
 }) {
   const missingBrief = !p.brief;
+  const [provider, setProvider] = useState<{ name: string; model: string } | null>(null);
+  useEffect(() => {
+    Promise.all([api.getHealth(), api.getSettings()])
+      .then(([h, s]) => setProvider({ name: h.provider, model: String(s.settings.llm_model ?? "") }))
+      .catch(() => setProvider(null));
+  }, []);
+  const providerLabel = provider
+    ? provider.name === "mock"
+      ? "mock (deterministic)"
+      : `${provider.name}${provider.model ? ` · ${provider.model}` : ""}`
+    : "…";
   const summary = useMemo(() => [
     ["Name", p.name || "—"],
     ["Source", p.source?.filename ?? "—"],
@@ -589,7 +667,8 @@ function StepRun(p: {
     ["Ticks", String(p.ticks)],
     ["Seed", String(p.seed)],
     ["LLM call budget", String(p.est?.estimate.max_llm_calls ?? "—")],
-  ], [p]);
+    ["Provider", providerLabel],
+  ], [p, providerLabel]);
 
   return (
     <div className="panel panel-body">

@@ -198,7 +198,7 @@ export const redactPreview = (text: string) =>
 export const getLLMCalls = (id: string) =>
   call<{ calls: { id: number; task: string; provider: string; model: string; status: string;
                    error: string | null; tokens_in: number | null; tokens_out: number | null;
-                   latency_ms: number; created_at: string }[] }>(`/api/runs/${id}/llm-calls`);
+                   latency_ms: number; created_at: string }[] }>(`/api/runs/${id}/llm-calls?limit=500`);
 
 export const getRunErrors = (id: string) =>
   call<{ errors: { tick: number; kind: string; payload: Record<string, unknown>; created_at: string }[] }>(

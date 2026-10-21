@@ -18,6 +18,9 @@ from playwright.sync_api import sync_playwright
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "docs/screenshots/final")
 SIZES = [(1440, 900), (1280, 720), (1920, 1080), (390, 844)]
+# optional third argument: force a specific completed run for the tab captures
+FORCED_RUN = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
+LIGHT = "--light" in sys.argv
 
 
 def api(path: str, data=None, method: str | None = None):
@@ -44,34 +47,11 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     assert wait_health(), "server did not come up"
 
-    # --- a fresh mock run for the RUNNING captures --------------------------
-    src_id = None
-    try:
-        sources = api("/api/sources")["sources"]
-        for s in sources:
-            sid = s.get("source_id") or s.get("id")
-            try:
-                if api(f"/api/sources/{sid}/chunks")["count"] > 0:
-                    src_id = sid
-                    break
-            except Exception:
-                continue
-    except Exception:
-        pass
-    print("live run source:", src_id)
-
-    live_id = None
-    try:
-        run = api("/api/runs", {
-            "source_id": src_id,
-            "name": "QA capture — live (mock)",
-            "config": {"agents": 8, "ticks": 8, "writes_per_tick": 4, "seed": 7},
-            "scenario_json": {"question": "QA capture run", "events": []},
-        })
-        live_id = run["id"]
-        api(f"/api/runs/{live_id}/start", {}, method="POST")
-    except Exception as e:
-        print("could not create live run:", e)
+    # --- use the active run for RUNNING captures; never create a run here ---
+    runs = api("/api/runs")["runs"]
+    active = next((r for r in runs if r["status"] in ("running", "seeding", "paused")), None)
+    live_id = active["id"] if active else None
+    print("active run:", live_id or "none (will use a completed run for Live)")
 
     # --- pick a completed run rich in real citations for the other tabs -----
     done_id = None
@@ -91,11 +71,14 @@ def main() -> None:
         done_id = candidates[0]["id"]
     if done_id is None:
         done_id = live_id
+    if FORCED_RUN:
+        done_id = FORCED_RUN
     print(f"completed run for tabs: {done_id} ({best} cited posts)")
 
-    time.sleep(10)  # let the mock run produce a few ticks
+    # no artificial sleep: the active run is captured as it is
 
-    def shot(page, w, name, url, wait=900, full=False, tab=None, click=None, graph_wait=0):
+    def shot(page, w, name, url, wait=900, full=False, tab=None, click=None, graph_wait=0,
+             prefix="final"):
         page.goto(url, wait_until="load", timeout=30000)
         page.wait_for_timeout(wait)
         if tab:
@@ -110,8 +93,8 @@ def main() -> None:
                 page.wait_for_timeout(900)
             except Exception as e:
                 print(f"  click {click} failed: {e}")
-        page.screenshot(path=str(OUT / f"final_{w}_{name}.png"), full_page=full)
-        print(f"wrote final_{w}_{name}.png")
+        page.screenshot(path=str(OUT / f"{prefix}_{w}_{name}.png"), full_page=full)
+        print(f"wrote {prefix}_{w}_{name}.png")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -122,8 +105,8 @@ def main() -> None:
             print(f"--- viewport {w}x{h}")
             shot(page, w, "home", f"{BASE}/#/")
             shot(page, w, "wizard", f"{BASE}/#/new")
-            if live_id:
-                shot(page, w, "run_live", f"{BASE}/#/run/{live_id}")
+            if live_id or done_id:
+                shot(page, w, "run_live", f"{BASE}/#/run/{live_id or done_id}")
             shot(page, w, "simulations", f"{BASE}/#/simulations")
             shot(page, w, "documents", f"{BASE}/#/documents")
             shot(page, w, "settings", f"{BASE}/#/settings")
@@ -137,6 +120,22 @@ def main() -> None:
                 shot(page, w, "run_evidence", f"{BASE}/#/run/{done_id}", tab="Live", click=".post .cite")
             if w == 390:
                 shot(page, w, "run_live_full", f"{BASE}/#/run/{done_id}", full=True)
+            ctx.close()
+
+        if LIGHT:
+            ctx = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+            ctx.add_init_script("try{localStorage.setItem('oasis-theme','light')}catch(e){}")
+            page = ctx.new_page()
+            page.on("console", lambda m: m.type == "error" and print("  console error:", m.text[:200]))
+            shot(page, 1440, "home", f"{BASE}/#/", prefix="final_light")
+            shot(page, 1440, "documents", f"{BASE}/#/documents", prefix="final_light")
+            shot(page, 1440, "settings", f"{BASE}/#/settings", prefix="final_light")
+            if live_id or done_id:
+                shot(page, 1440, "run_live", f"{BASE}/#/run/{live_id or done_id}", prefix="final_light")
+            if done_id:
+                shot(page, 1440, "run_analysis", f"{BASE}/#/run/{done_id}", tab="Analysis", graph_wait=1500, prefix="final_light")
+                shot(page, 1440, "run_network", f"{BASE}/#/run/{done_id}", tab="Network", graph_wait=2500, prefix="final_light")
+                shot(page, 1440, "run_evidence", f"{BASE}/#/run/{done_id}", tab="Live", click=".post .cite", prefix="final_light")
             ctx.close()
         browser.close()
     print("done")

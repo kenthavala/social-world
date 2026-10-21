@@ -76,7 +76,7 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
 
   const scheduled = authored.filter((e) => e.kind === "scheduled" && (e.payload as { status?: string }).status === "scheduled");
   const nextTick = Math.max(1, (run.last_completed_tick || 0) + 1);
-  const canControl = ["running", "seeding", "paused", "interrupted", "ready"].includes(run.status);
+  const canControl = ["draft", "ready", "running", "seeding", "paused", "interrupted"].includes(run.status);
 
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
@@ -98,6 +98,8 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
             className="input"
             placeholder="e.g. Overnight polls show public support dropping six points."
             value={text}
+            maxLength={500}
+            disabled={!canControl}
             onChange={(e) => setText(e.target.value)}
           />
           <div className="grid gap-3 sm:grid-cols-2">
@@ -122,13 +124,21 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
             </label>
           </div>
           <div className="flex items-center gap-2">
-            <button className="btn btn-primary" onClick={inject} disabled={!text.trim() || busy || events === null}>
+            <button className="btn btn-primary" onClick={inject}
+                    disabled={!canControl || !text.trim() || busy || events === null}>
               <Megaphone size={14} /> {audience === "all" ? "Inject event" : "Brief group"}
             </button>
             {busy && <Spinner label="Recording…" />}
           </div>
           {!canControl && (
-            <p className="t-meta">This run is {run.status} — events can still be recorded and will be delivered when the run resumes.</p>
+            <p className="t-meta">
+              {["completed", "failed"].includes(run.status)
+                ? `This run is ${run.status} — no further ticks will run, so new events cannot be delivered. Start a new simulation to run interventions.`
+                : `This run is ${run.status} — events cannot be delivered in this state.`}
+            </p>
+          )}
+          {canControl && ["draft", "ready"].includes(run.status) && (
+            <p className="t-meta">Scheduled events are stored now and delivered once the run starts.</p>
           )}
           {posted && (
             <div className="banner banner-info" style={{ fontSize: 12.5 }}>

@@ -54,9 +54,18 @@ export default function RunPage({ runId, onBack, onError }: {
     return () => ro.disconnect();
   }, []);
 
+  const pendingBump = useRef<number | null>(null);
   const onEvent = useCallback((_e: { event: string; data: Record<string, unknown> }) => {
-    bumpRef.current += 1;
-    setBump(bumpRef.current);
+    // Coalesce SSE bursts (post_created + llm_call + tick_completed) into one refetch.
+    if (pendingBump.current != null) return;
+    pendingBump.current = window.setTimeout(() => {
+      pendingBump.current = null;
+      bumpRef.current += 1;
+      setBump(bumpRef.current);
+    }, 350);
+  }, []);
+  useEffect(() => () => {
+    if (pendingBump.current != null) window.clearTimeout(pendingBump.current);
   }, []);
   const { connected } = useRunStream(runId, onEvent);
 
@@ -110,7 +119,9 @@ export default function RunPage({ runId, onBack, onError }: {
   const totalTicks = run?.config?.ticks ?? 0;
   const isActive = !!run && ["running", "seeding", "paused"].includes(run.status);
   const clampTick = (t: number) => Math.min(Math.max(t || 0, 1), Math.max(1, totalTicks));
-  const displayTick = run ? clampTick(run.current_tick || run.last_completed_tick) : 1;
+  const displayTick = run && (isActive || (run.last_completed_tick || 0) > 0)
+    ? clampTick(run.current_tick || run.last_completed_tick)
+    : 0;
   const highlightTick = isActive ? displayTick : 0; // only a live run has an in-progress tick
   const ruler = useMemo(
     () => buildRuler(posts, totalTicks, highlightTick),
@@ -119,6 +130,22 @@ export default function RunPage({ runId, onBack, onError }: {
   if (!run) return <div className="px-8 py-6"><Spinner label="Loading run…" /></div>;
 
   const agentCount = run.agents;
+  const healthVal = run.error ? "error"
+    : run.status === "paused" ? "paused"
+    : isActive ? (connected ? "live" : "retry")
+    : run.status === "completed" ? "done"
+    : run.status === "interrupted" ? "stopped"
+    : "idle";
+  const healthDot = run.error ? "dot-err"
+    : run.status === "paused" ? "dot-warn"
+    : isActive ? (connected ? "dot-run" : "dot-warn")
+    : run.status === "completed" ? "dot-ok"
+    : run.status === "interrupted" ? "dot-warn"
+    : "dot-idle";
+  const healthSub = run.error ? "see Log tab"
+    : run.status === "completed" ? "run finished"
+    : run.status === "paused" ? "resumes from here"
+    : null;
   const tickNote = run.status === "running"
     ? "in progress"
     : run.status === "completed" ? "complete"
@@ -159,7 +186,9 @@ export default function RunPage({ runId, onBack, onError }: {
                   <>
                     <span className="fg-4">·</span>
                     <span>{run.provider.name}</span>
-                    {run.provider.model && <span className="mono">{run.provider.model}</span>}
+                    {run.provider.name === "mock"
+                      ? <span className="mono">deterministic</span>
+                      : run.provider.model && <span className="mono">{run.provider.model}</span>}
                   </>
                 )}
                 <span className="fg-4">·</span>
@@ -233,19 +262,13 @@ export default function RunPage({ runId, onBack, onError }: {
                 { label: "Agents", val: String(agentCount), sub: null },
                 { label: "LLM calls", val: String(run.llm_calls_used), sub: run.max_llm_calls != null ? `budget ${run.max_llm_calls}` : null },
                 { label: "Elapsed", val: elapsed, sub: null },
-                {
-                  label: "Health",
-                  val: run.error ? "error" : isActive ? (connected ? "streaming" : "reconnecting") : "idle",
-                  sub: run.error ? "see Log tab" : !isActive && run.status === "completed" ? "run finished" : null,
-                },
+                { label: "Health", val: healthVal, sub: healthSub },
               ].map(({ label, val, sub }, i) => (
                 <div key={label} className="stat px-4 py-3"
                      style={{ borderRight: i < 4 ? "1px solid var(--line-1)" : undefined, borderTop: "1px solid var(--line-1)" }}>
                   <dt className="eyebrow">{label}</dt>
                   <dd className="m-0 flex items-center gap-2" style={{ height: 24, fontWeight: 500 }}>
-                    {label === "Health" && (
-                      <span className={`dot ${run.error ? "dot-err" : isActive && connected ? "dot-run" : "dot-idle"}`} />
-                    )}
+                    {label === "Health" && <span className={`dot ${healthDot}`} />}
                     <span className="num mono" style={{ fontSize: 20 }}>{val}</span>
                   </dd>
                   {sub && <dd className="t-meta m-0">{sub}</dd>}

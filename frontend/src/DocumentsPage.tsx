@@ -3,6 +3,9 @@ import { ChevronDown, FileText, Plus } from "lucide-react";
 import * as api from "./api";
 import { navigate } from "./router";
 import { Spinner } from "./common";
+import {
+  sourceBadgeClass, sourceStatusMeta, sourceStatusPill,
+} from "./status";
 
 interface Doc {
   id?: string;
@@ -11,8 +14,10 @@ interface Doc {
   status: string;
   pages?: number | null;
   chunks?: number | null;
+  words?: number | null;
   has_brief?: boolean;
   created_at?: string;
+  error?: string | null;
 }
 
 interface ChunkLite {
@@ -25,22 +30,33 @@ interface ChunkLite {
   citations: number;
 }
 
-export default function DocumentsPage({ onError }: { onError: (e: unknown) => void }) {
+export default function DocumentsPage({ onError, initialSource }: {
+  onError: (e: unknown) => void;
+  initialSource?: string;
+}) {
   const [docs, setDocs] = useState<Doc[] | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(initialSource ?? null);
   const [openChunk, setOpenChunk] = useState<string | null>(null);
   const [chunks, setChunks] = useState<ChunkLite[] | null>(null);
 
   useEffect(() => {
+    let alive = true;
     api.listSources().then((r) => {
+      if (!alive) return;
       const sources = ((r.sources || []) as unknown) as Doc[];
       setDocs(sources);
-      if (sources.length) setSel(sources[0].id ?? sources[0].source_id ?? null);
+      const ids = new Set(sources.map((d) => d.id ?? d.source_id));
+      const preferred = initialSource && ids.has(initialSource)
+        ? initialSource
+        : (sources[0] ? (sources[0].id ?? sources[0].source_id ?? null) : null);
+      setSel(preferred);
     }).catch((e) => {
+      if (!alive) return;
       setDocs([]);
       onError(e);
     });
-  }, [onError]);
+    return () => { alive = false; };
+  }, [onError, initialSource]);
 
   useEffect(() => {
     setOpenChunk(null);
@@ -49,6 +65,7 @@ export default function DocumentsPage({ onError }: { onError: (e: unknown) => vo
   }, [sel]);
 
   const selDoc = useMemo(() => docs?.find((d) => (d.id ?? d.source_id) === sel) ?? null, [docs, sel]);
+  const selMeta = selDoc ? sourceStatusMeta(selDoc.status) : null;
 
   return (
     <div className="pt-6 md:pt-8">
@@ -79,11 +96,12 @@ export default function DocumentsPage({ onError }: { onError: (e: unknown) => vo
           </button>
         </div>
       ) : (
-        <div className="grid items-start gap-4" style={{ gridTemplateColumns: "minmax(0, 340px) minmax(0, 1fr)" }}>
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
           <div className="panel overflow-hidden">
             {docs.map((d, i) => {
               const id = d.id ?? d.source_id ?? "";
               const active = id === sel;
+              const meta = sourceStatusMeta(d.status);
               return (
                 <button
                   key={id}
@@ -95,8 +113,9 @@ export default function DocumentsPage({ onError }: { onError: (e: unknown) => vo
                   <span className="flex min-w-0 flex-1 flex-col gap-1">
                     <span className="t-h3 ellipsis" title={d.filename}>{d.filename}</span>
                     <span className="t-meta flex flex-wrap items-center gap-2">
-                      <span className={`badge ${d.status === "ready" ? "s-ok" : d.status === "failed" ? "s-err" : ""}`} style={{ fontSize: 10 }}>
-                        {d.status === "ready" ? "READY" : d.status.toUpperCase()}
+                      <span className={`badge ${sourceBadgeClass(meta.tone)}`} style={{ fontSize: 10 }}
+                            title={`${meta.detail} Backend status: ${d.status}`}>
+                        {meta.label}
                       </span>
                       {d.pages != null && <span className="mono">{d.pages} pp</span>}
                       {d.chunks != null && <span className="mono">{d.chunks} chunks</span>}
@@ -118,16 +137,39 @@ export default function DocumentsPage({ onError }: { onError: (e: unknown) => vo
                       {selDoc.id ?? selDoc.source_id}
                     </p>
                   </div>
-                  <button className="btn btn-accent btn-sm" onClick={() => navigate({ name: "wizard" })}>
+                  <button
+                    className="btn btn-accent btn-sm"
+                    disabled={!selMeta?.usable}
+                    title={selMeta?.usable
+                      ? "Start a new simulation with this document preselected"
+                      : "This document is not ready for a run"}
+                    onClick={() => sel && navigate({ name: "wizard", sourceId: sel })}
+                  >
                     <Plus size={13} /> New simulation from this document
                   </button>
                 </div>
                 <dl className="kv panel-body" style={{ gridTemplateColumns: "120px minmax(0,1fr)", gap: "8px 16px", fontSize: 12.5 }}>
+                  <dt>Status</dt>
+                  <dd className="flex flex-wrap items-center gap-2">
+                    <span className={`badge ${selMeta ? sourceBadgeClass(selMeta.tone) : ""}`}>
+                      {selMeta?.label ?? selDoc.status}
+                    </span>
+                    <span className="t-id" title="Raw backend status">{selDoc.status}</span>
+                    {selMeta && <span className="t-meta">{selMeta.detail}</span>}
+                  </dd>
                   <dt>Pages</dt><dd className="mono">{selDoc.pages ?? "?"}</dd>
-                  <dt>Source chunks</dt><dd className="mono">{chunks?.length ?? "…"}</dd>
+                  <dt>Source chunks</dt><dd className="mono">{selDoc.chunks ?? chunks?.length ?? "…"}</dd>
+                  <dt>Words</dt><dd className="mono">{(selDoc.words ?? 0).toLocaleString()}</dd>
                   <dt>Brief</dt><dd>{selDoc.has_brief ? "generated" : "not generated yet"}</dd>
+                  <dt>Created</dt>
+                  <dd className="mono">{selDoc.created_at ? selDoc.created_at.slice(0, 19).replace("T", " ") + " UTC" : "—"}</dd>
                   <dt>Citation counts</dt><dd>per chunk, counted across all runs</dd>
                 </dl>
+                {selDoc.error && (
+                  <div className="banner banner-err mx-4 mb-4" role="status">
+                    <span>{selDoc.error}</span>
+                  </div>
+                )}
               </div>
             )}
 

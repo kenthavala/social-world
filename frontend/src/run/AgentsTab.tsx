@@ -310,7 +310,7 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }:
                             <span className={`sg sg-${postOverallStance(p)}`} />{postOverallStance(p).toUpperCase()}
                           </span>
                           <span className="mono" style={{ color: "var(--fg-4)" }}>T{String(p.tick).padStart(2, "0")}</span>
-                          {p.is_fallback && <span className="badge s-warn">fallback</span>}
+                          {Boolean(p.is_fallback) && <span className="badge s-warn">fallback</span>}
                           <span className="mono ml-auto" style={{ color: "var(--fg-4)", fontSize: 11 }}>
                             ♥ {p.likes} · ↻ {p.reposts} · ↩ {p.replies}
                           </span>
@@ -358,7 +358,8 @@ function StanceHistoryCard({ series }: { series: Record<string, { tick: number; 
         <Tooltip contentStyle={{ background: "var(--bg-1)", border: "1px solid var(--line-2)", borderRadius: 6, fontSize: 11 }} />
         {Object.keys(series).map((issue, i) => (
           <Line key={issue} type="monotone" dataKey={issue}
-                stroke={i === 0 ? "var(--accent)" : "var(--evt)"} strokeWidth={2} dot={false} />
+                stroke={i === 0 ? "var(--accent)" : i === 1 ? "var(--accent-fg)" : "var(--neu)"}
+                strokeWidth={2} dot={false} />
         ))}
       </LineChart>
     </ResponsiveContainer>

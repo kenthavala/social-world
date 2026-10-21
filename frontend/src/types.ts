@@ -56,6 +56,7 @@ export interface SourceStats {
   status: string;
   error: string | null;
   has_brief: boolean;
+  brief?: WorldBrief | null;
   truncated?: boolean;
   deduplicated?: boolean;
 }

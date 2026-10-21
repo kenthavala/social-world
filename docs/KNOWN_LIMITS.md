@@ -1,7 +1,8 @@
 # KNOWN_LIMITS.md — M1 → M3 (vertical slice + product shell + exports/analytics)
 
 1. **Scale is honest, not huge.** Designed for tens of agents and tens of ticks
-   (presets 16/30/60). SQLite is local-first by contract, not a cluster DB.
+   (Quick 8 agents / 8 ticks, Standard 24 / 20, Large 40 / 24; configurable to 100).
+   SQLite is local-first by contract, not a cluster DB.
 
 2. **Rule-based feed & reactions.** Activation, p_like/p_repost/follow use
    closed formulas with traits — they are calibrated heuristics, not learned.
@@ -33,10 +34,12 @@
    committed tick from `edge_history` (double-click returns to latest);
    communities/PageRank in Insights are computed on the final snapshot only.
 
-9. **The report is deterministic on purpose.** The Insights report counts
-   recorded rows (decisions #18/#13 here): stance landings, turning points,
-   clusters, citations, influencers, top posts. No LLM narrative is written;
-   the report task exists in the gateway should one ever be desired.
+9. **The counted report is deterministic on purpose.** It counts recorded rows
+   (decisions #18/#22/#24): stance landings, turning points, clusters, citations,
+   influencers, top posts. The only generated text is the optional executive
+   summary ("essay"), which is stored and rendered separately under an explicit
+   "LLM DRAFT — generated, not counted data" label and is deleted when the report
+   is regenerated (see #16 and decision #26).
 
 10. **Windows-first.** Uses UNC-free relative paths and `start.bat`/`dev.bat`/
     `reset.bat`. Anywhere else equivalent commands work with bash equivalents.
@@ -51,11 +54,15 @@
     the replay miss assertively, by design. Both toggles now live on the
     Settings page.
 
-13. **Free providers are flaky; the run tells the truth about it.** A real
-    nvidia_nim run recorded 3× ReadTimeout and 1× parse-failed among 6 calls;
-    every attempt is a logged `llm_calls` row. A stalled attempt can leave a
-    run mid-tick; stop → resume continues it (the recorded response is reused
-    through the cache, so nothing is re-billed or fabricated).
+13. **Free providers are flaky and slow; the run tells the truth about it.** A
+    real nvidia_nim run recorded 3× ReadTimeout and 1× parse-failed among 6 calls;
+    every attempt is a logged `llm_calls` row. On 2026-10-21 the configured
+    `z-ai/glm-5.3-flash` model measured 155–171 s per persona batch, 100–113 s per
+    write batch and ~217 s for a brief at a 180 s HTTP timeout. The 90 s default
+    is too tight for larger prompts; use Settings → Timeout 180 s and Max tokens
+    2000 for this provider. A stalled attempt can leave a run mid-tick; stop →
+    resume continues it (the recorded response is reused through the cache, so
+    nothing is re-billed or fabricated).
 
 14. **Exports are self-contained but raw.** The JSON bundle carries
     runs/agents/posts/edges/metrics/events/llm_calls/stance_history/chunks;
@@ -75,3 +82,14 @@
     summarized a snapshot that no longer exists). The essay call is exempt
     from the run's simulation budget (operator action after the run) but is
     still counted in `llm_calls_used` and cached like any other call.
+
+17. **Source status vocabulary.** Backend source states are `extracting`,
+    `extracted` and `failed`; there is no backend `ready` state. The UI maps
+    `extracted` to the success label **Ready** and keeps the raw state visible in
+    detail views (see decision #27). Runs additionally have `draft`, `ready`,
+    `seeding`, `running`, `paused`, `interrupted`, `completed` and `failed`.
+
+18. **The real provider is not fast.** The demo defaults should expect minutes,
+    not seconds, per tick at Quick settings (2 write calls per tick with
+    concurrency 2). The UI shows live progress and elapsed time; nothing is
+    fabricated to look faster.

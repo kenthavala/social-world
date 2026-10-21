@@ -60,7 +60,9 @@ export default function LogTab({ runId, bumpKey, onError }: {
 
       <section className="panel overflow-hidden">
         <div className="panel-head">
-          <h2 className="t-h3">LLM calls — {calls.length}</h2>
+          <h2 className="t-h3">
+            LLM calls — {calls.length}{calls.length >= 500 ? " (latest 500)" : ""}
+          </h2>
           <div className="flex items-center gap-3">
             {problemCount > 0 && (
               <label className="t-meta flex cursor-pointer items-center gap-2">

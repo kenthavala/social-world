@@ -192,10 +192,10 @@ class Gateway:
         last_error: Optional[str] = None
         for attempt in range(1, 5):  # 1 initial call + up to 3 retries
             try:
-                # essay is long-form prose: reasoning-style models write a long
-                # preamble and only end with the JSON, so give it room upfront
+                # essay/persona get their long-form budget inside _send; double_tokens
+                # is reserved for the explicit retry after a truncated response
                 text, meta = await self._send(task, messages, provider_name, model,
-                                              double_tokens=task == "essay")
+                                              double_tokens=False)
             except BudgetExhausted:
                 raise
             except AppError as e:
@@ -256,8 +256,11 @@ class Gateway:
             }]
             text2, meta2 = "", meta
             try:
-                text2, meta2 = await self._send(task, repair_messages, provider_name, model,
-                                                double_tokens=task == "essay")
+                # If the first answer was cut off, the repair gets a larger budget
+                # instead of repeating the same truncation.
+                text2, meta2 = await self._send(
+                    task, repair_messages, provider_name, model,
+                    double_tokens=meta.get("finish_reason") == "length")
             except BudgetExhausted:
                 raise
             except Exception:
@@ -357,16 +360,20 @@ class Gateway:
             rpm = config.default_rpm_fcc
         await rate_limiter.acquire(preset.name, rpm, config.llm_concurrency)
         started = time.monotonic()
-        max_tokens = min(config.llm_max_tokens * (2 if double_tokens else 1), 4000)
+        # Task-specific output budget. Persona batches and the essay are long-form:
+        # a 1200-token cap truncated valid JSON on verbose/reasoning models.
+        base_mult = 2 if task in ("persona", "essay") else 1
+        max_tokens = min(config.llm_max_tokens * base_mult * (2 if double_tokens else 1), 4000)
         try:
-            resp = await self._http_call(preset, wire, base, model, messages, api_key)
+            resp = await self._http_call(preset, wire, base, model, messages, api_key, max_tokens)
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             # Zen wire learning: wrong-endpoint error -> try the other adapter once
             if preset.name == "opencode_zen" and status in (400, 404):
                 other = "anthropic_messages" if wire == "openai_chat" else "openai_chat"
                 try:
-                    resp = await self._http_call(preset, other, base, model, messages, api_key)
+                    resp = await self._http_call(preset, other, base, model, messages, api_key,
+                                                 max_tokens)
                     self._wire_cache[f"opencode_zen|{model}"] = other
                 except httpx.HTTPStatusError:
                     raise self._status_error(preset, model, e)
@@ -404,17 +411,17 @@ class Gateway:
         return err
 
     async def _http_call(self, preset: Preset, wire: str, base: str, model: str,
-                         messages: list[dict], api_key: str):
+                         messages: list[dict], api_key: str, max_tokens: int):
         if wire == "openai_chat":
             return await adapters.openai_chat(
                 base, model, messages, api_key=api_key,
-                temperature=config.llm_temperature, max_tokens=min(config.llm_max_tokens, 4000),
+                temperature=config.llm_temperature, max_tokens=max_tokens,
                 timeout=config.llm_timeout_seconds, extra_headers=preset.extra_headers)
         if wire == "anthropic_messages":
             resp = await adapters.anthropic_messages(
                 base, model, messages, api_key=api_key,
                 temperature=config.llm_temperature,
-                max_tokens=min(config.llm_max_tokens, 4000),
+                max_tokens=max_tokens,
                 timeout=config.llm_timeout_seconds)
             return resp
         raise AppError(f"unknown wire format '{wire}'", component="llm", stage="send",

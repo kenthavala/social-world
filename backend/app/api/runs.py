@@ -75,9 +75,10 @@ def create_run(body: RunIn) -> dict:
         src = db.query_one("SELECT id, status FROM sources WHERE id=?", (body.source_id,))
         if src is None:
             raise AppError("source not found", component="api", stage="runs", status_code=404)
-        if src["status"] == "failed":
-            raise AppError("source extraction failed; upload the document again",
-                           component="api", stage="runs")
+        if src["status"] != "extracted":
+            raise AppError(f"source is not ready for a run (status: {src['status']})",
+                           component="api", stage="runs", status_code=409,
+                           hint="Wait for extraction to finish; a failed document must be re-uploaded.")
     active = db.query_one("SELECT id FROM runs WHERE status IN ('running','seeding')")
     if active is not None:
         raise AppError(f"run {active['id']} is already active; only one run can run at a time",
@@ -154,7 +155,7 @@ def delete_run(run_id: str) -> dict:
                            ("memories", "run_id"), ("stance_history", "run_id"),
                            ("events", "run_id"), ("metrics", "run_id"),
                            ("llm_calls", "run_id"), ("agents", "run_id"),
-                           ("runs", "id")):
+                           ("reports", "run_id"), ("runs", "id")):
             conn.execute(f"DELETE FROM {table} WHERE {col}=?", (run_id,))
     return {"deleted": run_id}
 

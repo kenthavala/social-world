@@ -179,3 +179,53 @@ def test_chunks_listing(client, uploaded_source):
     assert first["id"].startswith("c_")
     assert "citations" in first
     assert client.get("/api/sources/nonexistent/chunks").status_code == 404
+
+
+def test_source_detail_carries_the_stored_brief(client, uploaded_source):
+    """The wizard reuses a stored brief instead of paying for regeneration."""
+    sid = uploaded_source["source_id"]
+    assert client.get(f"/api/sources/{sid}").json()["brief"] is None
+    client.post(f"/api/sources/{sid}/brief", json={"scenario": "How will towns react?"})
+    detail = client.get(f"/api/sources/{sid}").json()
+    assert detail["brief"]["issues"]
+    assert detail["has_brief"] is True
+
+
+def test_reupload_failed_source_recovers_in_place(client, fresh_db):
+    """A failed sha must not 500 on re-upload (UNIQUE sha256) — it re-ingests."""
+    import hashlib
+    text = ("Renewable energy subsidies encourage investment and reduce emissions. "
+            "Critics say household costs rise and reliability suffers. ") * 12
+    raw = text.encode("utf-8")
+    sha = hashlib.sha256(raw).hexdigest()
+    fresh_db.execute(
+        "INSERT INTO sources(id, filename, sha256, kind, pages, created_at, status, brief_json, error)"
+        " VALUES(?,?,?,?,?,?,?,?,?)",
+        ("src_previous_failure", "retry.md", sha, "file", 0, "", "failed", None, "previous error"))
+    r = client.post("/api/sources", data={"text": text, "filename": "retry.md"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source_id"] == "src_previous_failure"  # reused, not duplicated
+    assert body["status"] == "extracted"
+    assert body["chunks"] >= 1
+    assert body["error"] is None
+    assert fresh_db.scalar("SELECT COUNT(*) FROM sources WHERE sha256=?", (sha,)) == 1
+
+
+def test_create_run_requires_extracted_source(client, fresh_db, uploaded_source):
+    sid = uploaded_source["source_id"]
+    fresh_db.execute("UPDATE sources SET status='extracting' WHERE id=?", (sid,))
+    r = client.post("/api/runs", json={"source_id": sid, "config": {}})
+    assert r.status_code == 409
+    assert "not ready" in r.json()["error"]["message"]
+
+
+def test_delete_run_removes_its_report(client, fresh_db, uploaded_source):
+    r = client.post("/api/runs", json={"source_id": uploaded_source["source_id"],
+                                       "name": "report cascade", "config": {}})
+    run_id = r.json()["id"]
+    fresh_db.execute(
+        "INSERT INTO reports(run_id, created_at, analytics_json, report_md, report_json)"
+        " VALUES(?,?,?,?,?)", (run_id, "", "{}", "x", "{}"))
+    assert client.delete(f"/api/runs/{run_id}").status_code == 200
+    assert fresh_db.scalar("SELECT COUNT(*) FROM reports WHERE run_id=?", (run_id,)) == 0

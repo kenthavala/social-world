@@ -152,7 +152,10 @@ export default function SimulationsPage({ onOpen, onNew, onError }: {
                     <td onClick={(e) => e.stopPropagation()}>
                       <button
                         className="btn btn-ghost btn-sm btn-icon"
-                        title={["running", "seeding"].includes(r.status) ? "Stop the run before deleting it" : "Delete run and all its data"}
+                        title={["running", "seeding", "paused"].includes(r.status)
+                          ? "Stop the run before deleting it"
+                          : "Delete run and all its data"}
+                        disabled={["running", "seeding", "paused"].includes(r.status)}
                         onClick={() => remove(r)}
                         aria-label={`Delete ${r.name}`}
                       >
