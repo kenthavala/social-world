@@ -1,13 +1,14 @@
 """Runs API: CRUD, seed/start/pause/resume/stop, events, feeds, agents, graph, metrics."""
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app import db
@@ -15,6 +16,7 @@ from app.errors import AppError
 from app.sim import budget as budget_mod
 from app.sim import engine
 from app.api.stream import stream_response
+from app.version import APP_VERSION, PROMPT_VERSION
 
 router = APIRouter(prefix="/api")
 
@@ -67,6 +69,30 @@ class RunIn(BaseModel):
     name: str = ""
     scenario_json: dict = Field(default_factory=dict)
     config: dict = Field(default_factory=dict)
+    parent_run_id: Optional[str] = None
+    branch_round: Optional[int] = None
+
+
+def _write_manifest(run_id: str, source_id: Optional[str], cfg: dict,
+                    provider_meta: dict, created_at: str,
+                    parent_run_id: Optional[str] = None,
+                    branch_round: Optional[int] = None) -> dict:
+    sha = db.scalar("SELECT sha256 FROM sources WHERE id=?", (source_id,)) if source_id else None
+    manifest = {
+        "run_id": run_id,
+        "provider": provider_meta.get("name"),
+        "model": provider_meta.get("model"),
+        "seed": cfg.get("seed"),
+        "prompt_version": PROMPT_VERSION,
+        "app_version": APP_VERSION,
+        "source_sha256": sha,
+        "created_at": created_at,
+        "parent_run_id": parent_run_id,
+        "branch_round": branch_round,
+    }
+    db.execute("UPDATE runs SET manifest_json=?, parent_run_id=?, branch_round=? WHERE id=?",
+               (db.j(manifest), parent_run_id, branch_round, run_id))
+    return manifest
 
 
 @router.post("/runs")
@@ -88,12 +114,17 @@ def create_run(body: RunIn) -> dict:
     name = (body.name or f"Simulation {_now()[:16]}")[:80]
     from app.config import config as _cfg
     provider_meta = {"name": _cfg.llm_provider, "model": _cfg.llm_model}
+    created = _now()
     db.execute(
         "INSERT INTO runs(id, name, source_id, scenario_json, config_json, provider_json, seed,"
         " status, current_tick, last_completed_tick, rng_state, llm_calls_used, created_at,"
-        " updated_at, error_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " updated_at, error_json, parent_run_id, branch_round)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (run_id, name, body.source_id or None, db.j(body.scenario_json), db.j(cfg),
-         db.j(provider_meta), cfg["seed"], "draft", 0, 0, None, 0, _now(), _now(), None))
+         db.j(provider_meta), cfg["seed"], "draft", 0, 0, None, 0, created, created, None,
+         body.parent_run_id, body.branch_round))
+    _write_manifest(run_id, body.source_id, cfg, provider_meta, created,
+                    body.parent_run_id, body.branch_round)
     return run_detail(run_id)
 
 
@@ -136,6 +167,10 @@ def run_detail(run_id: str) -> dict:
         "started_at": r["started_at"], "finished_at": r["finished_at"],
         # provider/model captured at creation (additive; used by the run header)
         "provider": db.uj(r["provider_json"], {}) or {},
+        "manifest": db.uj(r["manifest_json"], {}) or None,
+        "parent_run_id": r["parent_run_id"],
+        "branch_round": r["branch_round"],
+        "llm_reserved": r["llm_reserved"] or 0,
     }
 
 
@@ -146,6 +181,11 @@ def get_run(run_id: str) -> dict:
 
 @router.delete("/runs/{run_id}")
 def delete_run(run_id: str) -> dict:
+    status = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
+    if status in ("running", "seeding", "paused"):
+        raise AppError("stop the run before deleting it", component="api", stage="runs",
+                       status_code=409,
+                       hint="A running, seeding or paused run owns live state; stop it first.")
     if run_id in engine._tasks and not engine._tasks[run_id].done():
         raise AppError("stop the run before deleting it", component="api", stage="runs",
                        status_code=409)
@@ -170,16 +210,22 @@ async def seed_run(run_id: str) -> dict:
                        component="api", stage="seed", status_code=409)
     from app.llm.gateway import gateway
     n = await engine.seed_run(run_id, gateway)
-    return {"agents": n, "status": "ready"}
+    return {"agents": n, "status": db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))}
 
 
 @router.post("/runs/{run_id}/start")
 async def start_run(run_id: str) -> dict:
+    """Start in the background so a client disconnect cannot strand seeding."""
     r = run_detail(run_id)
-    if r["agents"] == 0:
-        from app.llm.gateway import gateway
-        await engine.seed_run(run_id, gateway)
-    await engine.start_run(run_id)
+    if r["status"] in ("completed", "failed", "running", "seeding"):
+        raise AppError(f"cannot start a run in state '{r['status']}'",
+                       component="api", stage="runs", status_code=409)
+    if r["status"] == "paused" or r["status"] == "interrupted":
+        raise AppError("this run is resumable — use Resume", component="api",
+                       stage="runs", status_code=409)
+    from app.llm.gateway import gateway
+    task = asyncio.create_task(engine.seed_and_start(run_id, gateway))
+    engine._tasks[run_id] = task
     return run_detail(run_id)
 
 
@@ -191,7 +237,30 @@ def pause_run(run_id: str) -> dict:
 
 @router.post("/runs/{run_id}/resume")
 async def resume_run(run_id: str) -> dict:
-    await engine.request_resume(run_id)
+    status = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
+    if status not in ("paused", "interrupted"):
+        raise AppError(f"cannot resume a run in state '{status}'",
+                       component="api", stage="runs", status_code=409)
+    from app.llm.gateway import gateway
+    task = asyncio.create_task(engine.seed_and_start(run_id, gateway, resume=True))
+    engine._tasks[run_id] = task
+    return run_detail(run_id)
+
+
+class BudgetIn(BaseModel):
+    max_llm_calls: int = Field(gt=0, le=100000)
+
+
+@router.post("/runs/{run_id}/budget")
+def raise_budget(run_id: str, body: BudgetIn) -> dict:
+    """Raise a paused run's call budget, then Resume. Additive; the estimate is unchanged."""
+    row = db.query_one("SELECT config_json, status FROM runs WHERE id=?", (run_id,))
+    if row is None:
+        raise AppError("run not found", component="api", stage="runs", status_code=404)
+    cfg = db.uj(row["config_json"], {}) or {}
+    cfg["max_llm_calls"] = int(body.max_llm_calls)
+    db.execute("UPDATE runs SET config_json=?, updated_at=? WHERE id=?",
+               (db.j(cfg), _now(), run_id))
     return run_detail(run_id)
 
 
@@ -295,7 +364,7 @@ def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = N
     if q:
         sql += " AND p.text LIKE ?"
         params.append(f"%{q}%")
-    sql += " ORDER BY p.tick, p.id LIMIT ? OFFSET ?"
+    sql += " ORDER BY p.seq, p.tick LIMIT ? OFFSET ?"
     params += [max(1, min(1000, limit)), max(0, offset)]
     rows = db.query(sql, params)
     posts = []
@@ -306,8 +375,130 @@ def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = N
                       "stance": db.uj(p["stance_json"], {}), "emotion": p["emotion"],
                       "cited_chunk_ids": db.uj(p["cited_chunk_ids_json"], []),
                       "likes": p["likes"], "reposts": p["reposts"], "replies": p["replies"],
-                      "is_fallback": p["is_fallback"]})
+                      "is_fallback": p["is_fallback"], "seq": p["seq"],
+                      "model": p["model"], "provider": p["provider"],
+                      "via_fallback": p["via_fallback"]})
     return {"posts": posts, "count": len(posts)}
+
+
+@router.get("/runs/{run_id}/stats")
+def get_run_stats(run_id: str) -> dict:
+    """Counted call outcomes for the Run details drawer. No generated prose."""
+    if db.query_one("SELECT id FROM runs WHERE id=?", (run_id,)) is None:
+        raise AppError("run not found", component="api", stage="stats", status_code=404)
+    by_status: dict[str, int] = {}
+    by_task: dict[str, int] = {}
+    models: dict[str, int] = {}
+    latency = 0
+    calls = 0
+    for r in db.query("SELECT task, status, model, latency_ms FROM llm_calls WHERE run_id=?",
+                      (run_id,)):
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+        by_task[r["task"]] = by_task.get(r["task"], 0) + 1
+        if r["model"]:
+            models[r["model"]] = models.get(r["model"], 0) + 1
+        if r["latency_ms"]:
+            latency += r["latency_ms"]
+            calls += 1
+    return {
+        "run_id": run_id,
+        "calls": sum(by_status.values()),
+        "by_status": by_status,
+        "by_task": by_task,
+        "models": models,
+        "avg_latency_ms": int(latency / calls) if calls else None,
+        "repaired": by_status.get("parse_failed", 0),
+        "rejected": by_status.get("error", 0),
+        "fallback_posts": db.scalar(
+            "SELECT COUNT(*) FROM posts WHERE run_id=? AND via_fallback=1", (run_id,)) or 0,
+        "template_posts": db.scalar(
+            "SELECT COUNT(*) FROM posts WHERE run_id=? AND is_fallback=1", (run_id,)) or 0,
+    }
+
+
+class BranchIn(BaseModel):
+    text: str = ""
+    audience: str = "all"
+    name: str = ""
+    tick: int = 1
+
+
+@router.post("/runs/{run_id}/branch")
+def branch_run(run_id: str, body: BranchIn) -> dict:
+    """Truthful intervention comparison: a NEW run from round 1 with the same
+    source, scenario, config and seed, plus the intervention. The engine does not
+    fork state at an arbitrary round, so this is labelled as a re-run, not a fork."""
+    orig = db.query_one("SELECT * FROM runs WHERE id=?", (run_id,))
+    if orig is None:
+        raise AppError("run not found", component="api", stage="branch", status_code=404)
+    if not body.text.strip():
+        raise AppError("intervention text is required", component="api", stage="branch")
+    cfg = db.uj(orig["config_json"], {}) or {}
+    new = create_run(RunIn(
+        source_id=orig["source_id"],
+        name=(body.name or f"{orig['name']} — intervention")[:80],
+        scenario_json=db.uj(orig["scenario_json"], {}) or {},
+        config=cfg,
+        parent_run_id=run_id,
+        branch_round=1,
+    ))
+    engine.inject_event(new["id"], body.text.strip()[:500], tick=1,
+                        audience=body.audience or "all")
+    return new | {"mode": "rerun_from_round_1", "parent_run_id": run_id,
+                  "label": "Re-run with this intervention from round 1"}
+
+
+def _stance_bucket(stances: dict) -> str:
+    vals = [float(v.get("value", 0.0)) for v in stances.values()
+            if isinstance(v, dict)] if stances else []
+    mean = sum(vals) / max(1, len(vals))
+    return "pro" if mean > 0.15 else "con" if mean < -0.15 else "neu"
+
+
+@router.get("/runs/{run_id}/compare")
+def compare_runs(run_id: str, other: str) -> dict:
+    """Counted comparison of two runs: per-round stance mix and citations by chunk."""
+    if db.query_one("SELECT id FROM runs WHERE id=?", (run_id,)) is None or \
+            db.query_one("SELECT id FROM runs WHERE id=?", (other,)) is None:
+        raise AppError("run not found", component="api", stage="compare", status_code=404)
+    out = {}
+    for key, rid in (("left", run_id), ("right", other)):
+        rounds: dict[int, dict] = {}
+        cites: dict[str, int] = {}
+        for p in db.query("SELECT tick, stance_json, cited_chunk_ids_json FROM posts"
+                          " WHERE run_id=? ORDER BY seq", (rid,)):
+            b = _stance_bucket(db.uj(p["stance_json"], {}) or {})
+            r = rounds.setdefault(p["tick"], {"tick": p["tick"], "pro": 0, "neu": 0, "con": 0,
+                                              "total": 0})
+            r[b] += 1
+            r["total"] += 1
+            for cid in db.uj(p["cited_chunk_ids_json"], []) or []:
+                cites[cid] = cites.get(cid, 0) + 1
+        chunk_info = []
+        for cid, n in sorted(cites.items(), key=lambda kv: (-kv[1], kv[0]))[:12]:
+            row = db.query_one("SELECT heading, page_start, page_end FROM chunks WHERE id=?", (cid,))
+            chunk_info.append({"chunk_id": cid, "citations": n,
+                               "heading": row["heading"] if row else None,
+                               "page_start": row["page_start"] if row else None,
+                               "page_end": row["page_end"] if row else None})
+        out[key] = {
+            "run": run_detail(rid),
+            "rounds": [rounds[k] for k in sorted(rounds)],
+            "citations": chunk_info,
+            "posts": db.scalar("SELECT COUNT(*) FROM posts WHERE run_id=?", (rid,)) or 0,
+            "fallback_posts": db.scalar(
+                "SELECT COUNT(*) FROM posts WHERE run_id=? AND is_fallback=1", (rid,)) or 0,
+            "llm_calls": db.scalar("SELECT COUNT(*) FROM llm_calls WHERE run_id=?", (rid,)) or 0,
+        }
+    left, right = out["left"], out["right"]
+    out["diffs"] = {
+        "posts": right["posts"] - left["posts"],
+        "fallback_posts": right["fallback_posts"] - left["fallback_posts"],
+        "citation_total": sum(c["citations"] for c in right["citations"]) -
+                          sum(c["citations"] for c in left["citations"]),
+        "rounds": max(0, len(right["rounds"]) - len(left["rounds"])),
+    }
+    return out | {"label": "Re-run with intervention vs original (counted differences)"}
 
 
 @router.get("/runs/{run_id}/graph")
@@ -374,8 +565,45 @@ def get_events(run_id: str, limit: int = 200) -> dict:
 
 
 @router.get("/runs/{run_id}/stream")
-def get_stream(run_id: str):
-    return stream_response(run_id)
+def get_stream(run_id: str, request: Request):
+    last = request.headers.get("last-event-id") or request.query_params.get("last_event_id")
+    return stream_response(run_id, last)
+
+
+@router.get("/runs/{run_id}/backfill")
+def backfill_run(run_id: str, after_event: int = 0, after_post: int = 0,
+                 limit: int = 500) -> dict:
+    """REST catch-up after an SSE gap. Returns store events and posts by sequence."""
+    if db.query_one("SELECT id FROM runs WHERE id=?", (run_id,)) is None:
+        raise AppError("run not found", component="api", stage="backfill", status_code=404)
+    cap = max(1, min(2000, limit))
+    events = db.query(
+        "SELECT id, kind, payload_json, created_at FROM stream_events"
+        " WHERE run_id=? AND id>? ORDER BY id LIMIT ?", (run_id, max(0, after_event), cap))
+    posts = db.query(
+        "SELECT p.*, a.handle, a.name FROM posts p LEFT JOIN agents a ON a.id=p.agent_id"
+        " AND a.run_id=p.run_id WHERE p.run_id=? AND p.seq>? ORDER BY p.seq LIMIT ?",
+        (run_id, max(0, after_post), cap))
+    return {
+        "run": run_detail(run_id),
+        "events": [{"id": r["id"], "kind": r["kind"],
+                    "payload": db.uj(r["payload_json"], {}),
+                    "created_at": r["created_at"]} for r in events],
+        "posts": [{
+            "id": p["id"], "tick": p["tick"], "agent_id": p["agent_id"],
+            "handle": p["handle"], "name": p["name"], "kind": p["kind"],
+            "parent_id": p["parent_id"], "text": p["text"],
+            "stance": db.uj(p["stance_json"], {}), "emotion": p["emotion"],
+            "cited_chunk_ids": db.uj(p["cited_chunk_ids_json"], []),
+            "likes": p["likes"], "reposts": p["reposts"], "replies": p["replies"],
+            "is_fallback": p["is_fallback"], "seq": p["seq"], "model": p["model"],
+            "provider": p["provider"], "via_fallback": p["via_fallback"],
+        } for p in posts],
+        "last_event_id": db.scalar(
+            "SELECT COALESCE(MAX(id),0) FROM stream_events WHERE run_id=?", (run_id,)) or 0,
+        "last_post_seq": db.scalar(
+            "SELECT COALESCE(MAX(seq),0) FROM posts WHERE run_id=?", (run_id,)) or 0,
+    }
 
 
 @router.post("/runs/{run_id}/report")

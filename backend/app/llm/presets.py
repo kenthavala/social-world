@@ -12,6 +12,7 @@ class Preset:
     key_env: Optional[str]                # env var holding the key
     default_rpm: int
     notes: str = ""
+    requires_key: bool = True             # local servers need no key
     extra_headers: dict = field(default_factory=dict)
 
 
@@ -19,8 +20,9 @@ PRESETS: dict[str, Preset] = {
     "openrouter": Preset(
         "openrouter", "openai_chat", "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY", 15,
-        "Free tier: 50 requests/day until $10 lifetime credits bought, then 1000/day.",
-        {"HTTP-Referer": "http://localhost", "X-Title": "OASIS-Lite"},
+        "Free tier: 50 requests/day until $10 lifetime credits bought, then 1000/day. "
+        "Errors can arrive inside a 200 body; the adapter checks the body as well as the status.",
+        extra_headers={"HTTP-Referer": "http://localhost", "X-Title": "The Social World"},
     ),
     "opencode_zen": Preset(
         "opencode_zen", "openai_chat", "https://opencode.ai/zen/v1",
@@ -46,10 +48,23 @@ PRESETS: dict[str, Preset] = {
         "TOKENHARBOR_API_KEY", 10,
         "Free models must be enabled in the Token Harbor dashboard first.",
     ),
+    "ollama": Preset(
+        "ollama", "openai_chat", "http://localhost:11434/v1", None, 0,
+        "Local Ollama OpenAI-compatible endpoint. No key. Pull a model first "
+        "(for example: ollama pull llama3.1). Small context windows can truncate prompts.",
+        requires_key=False,
+    ),
+    "lmstudio": Preset(
+        "lmstudio", "openai_chat", "http://localhost:1234/v1", None, 0,
+        "Local LM Studio server (Developer tab → Start Server). No key. "
+        "Load a model with a context window large enough for the persona plus source chunks.",
+        requires_key=False,
+    ),
     "custom": Preset(
         "custom", "openai_chat", "", "LLM_API_KEY", 15,
-        "Any OpenAI- or Anthropic-compatible endpoint (local Ollama/LM Studio). "
-        "Set LLM_BASE_URL and LLM_WIRE_FORMAT.",
+        "Any OpenAI- or Anthropic-compatible endpoint. Set LLM_BASE_URL and LLM_WIRE_FORMAT. "
+        "LLM_API_KEY may be left blank for local servers.",
+        requires_key=False,
     ),
     "mock": Preset(
         "mock", "none", "", None, 0,

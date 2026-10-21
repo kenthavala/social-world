@@ -265,3 +265,54 @@
     source document, and run creation rejects a source that is not `extracted`.
     Chunk listings include per-chunk citation counts plus the source's chunk/word
     totals; failed rows surface their `error` instead of looking merely "not ready".
+
+## M5 — The Social World (release branch)
+
+32. **Budget exhaustion pauses; it no longer silently degrades the whole run.**
+    Decision #5 let a run continue with template posts after the call budget was
+    spent. That made a budget hit look like ordinary completion. Now a per-batch
+    budget hit still materialises that round's already-selected speakers with
+    clearly marked fallback posts (so the round is atomic), then the worker pauses
+    at the round boundary with a recorded reason. A 402/401/403 or an exhausted
+    provider after retries also pauses rather than failing, because a person can
+    fix a key, top up an account or raise the budget. `POST /runs/{id}/budget`
+    raises `max_llm_calls`; Resume continues from the next round. Existing posts
+    are never deleted.
+
+33. **Seeding is background work and Stop wins.** `/start` and `/resume` launch
+    `seed_and_start` as a task instead of awaiting the whole seed inside the HTTP
+    request. `seed_run` records the status it finds before finalising: a Stop or
+    Pause during persona generation is never overwritten with `ready`. Resume of
+    a seed-interrupted run seeds first when it has zero agents. Deleting a
+    running/seeding/paused run is refused.
+
+34. **Posts get a monotonic per-run sequence and SSE gets a replay log.**
+    Additive migration v4 adds `posts.seq` (backfilled per run in original row
+    order), a unique `(run_id, seq)` index, `posts.model/provider/via_fallback`,
+    `runs.manifest_json/parent_run_id/branch_round/llm_reserved`, and a
+    `stream_events` table. The feed orders by `seq`, not by a content hash. Every
+    SSE event is persisted for an existing run and carries its row id; reconnects
+    with `Last-Event-ID` replay, and `GET /runs/{id}/backfill?after_event=&after_post=`
+    catches up over REST. Heartbeats are comments, never fake events.
+
+35. **There is no fork-at-round, so interventions are truthfully re-runs.**
+    The engine snapshots nothing at a round. `POST /runs/{id}/branch` creates a
+    new run with the same source, scenario, config and seed, schedules the
+    intervention at round 1, and links `parent_run_id`/`branch_round=1`. The UI
+    must label it "Re-run with this intervention from round 1", never "branch".
+    `GET /runs/{id}/compare?other=…` returns counted per-round stance mixes,
+    citation counts and totals.
+
+36. **Provider quirks are encoded in the gateway, not the user's head.**
+    OpenRouter-style error objects inside HTTP 200 are classified (402 for
+    credits, 429, 401, otherwise 502). Multiple system messages are merged into
+    one for hosted open-weight models. Ollama and LM Studio are presets that
+    require no key. The model that actually produced a post is stored on the post
+    (`model/provider/via_fallback`) so a fallback is visible in the feed and
+    exports.
+
+37. **The public name changed; internal identifiers did not.** The product is
+    **The Social World** everywhere a user or repository visitor sees it. The
+    SQLite filename `oasis.db`, localStorage keys (`oasis-theme`,
+    `oasis-wizard-draft`, `oasis-run-tab`, `oasis-autostart`) and API paths are
+    unchanged so existing installations and preferences keep working.

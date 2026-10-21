@@ -83,18 +83,51 @@ def _record(run_id, task, provider, model, rhash, req_json, response_text,
 def _check_budget(run_id: Optional[str]) -> None:
     if not run_id:
         return
-    row = db.query_one("SELECT llm_calls_used, config_json FROM runs WHERE id=?", (run_id,))
+    row = db.query_one(
+        "SELECT llm_calls_used, llm_reserved, config_json FROM runs WHERE id=?", (run_id,))
     if row is None:
         return
     cfg = db.uj(row["config_json"], {}) or {}
     limit = cfg.get("max_llm_calls")
     used = row["llm_calls_used"] or 0
-    if limit is not None and used >= int(limit):
-        raise BudgetExhausted(f"run budget exhausted: {used}/{limit} LLM calls")
+    reserved = row["llm_reserved"] or 0
+    if limit is not None and used + reserved >= int(limit):
+        raise BudgetExhausted(f"run budget exhausted: {used}+{reserved}/{limit} LLM calls")
+
+
+def _reserve_budget(run_id: Optional[str]) -> None:
+    """Atomically reserve one call slot so concurrent write batches cannot overshoot."""
+    if not run_id:
+        return
+    with db.tx() as conn:
+        row = conn.execute(
+            "SELECT llm_calls_used, llm_reserved, config_json FROM runs WHERE id=?",
+            (run_id,)).fetchone()
+        if row is None:
+            return
+        cfg = db.uj(row["config_json"], {}) or {}
+        limit = cfg.get("max_llm_calls")
+        used = row["llm_calls_used"] or 0
+        reserved = row["llm_reserved"] or 0
+        if limit is not None and used + reserved >= int(limit):
+            raise BudgetExhausted(f"run budget reached: {used}+{reserved}/{limit} LLM calls")
+        conn.execute("UPDATE runs SET llm_reserved=COALESCE(llm_reserved,0)+1 WHERE id=?",
+                     (run_id,))
+
+
+def _release_budget(run_id: Optional[str]) -> None:
+    if not run_id:
+        return
+    db.execute("UPDATE runs SET llm_reserved=CASE WHEN COALESCE(llm_reserved,0)>0"
+               " THEN llm_reserved-1 ELSE 0 END WHERE id=?", (run_id,))
 
 
 def _hint_for(provider: str, status: Optional[int], error_text: str) -> str | None:
     key_env = provider_key_env(provider)
+    if status == 402:
+        return (f"402 from {provider}: the account is out of credits or over its quota. "
+                "Top up the provider account, switch provider in Settings, or resume after a top-up. "
+                "The run is paused; recorded posts are kept.")
     if status in (401, 403):
         if provider == "tokenharbor":
             return ("403 from Token Harbor: the key was rejected or free models are not enabled. "
@@ -177,8 +210,15 @@ class Gateway:
                                      tokens_in=row["tokens_in"], tokens_out=row["tokens_out"])
 
         warning_cb: Callable[[str], None] = lambda msg: _emit(run_id, "warning", {"message": msg})
-        return await self._call_provider(task, messages, expect=expect, run_id=run_id,
-                                         rhash=rhash, max_items=max_items, warning_cb=warning_cb)
+        if check_budget:
+            _reserve_budget(run_id)
+        try:
+            return await self._call_provider(task, messages, expect=expect, run_id=run_id,
+                                             rhash=rhash, max_items=max_items,
+                                             warning_cb=warning_cb)
+        finally:
+            if check_budget:
+                _release_budget(run_id)
 
     # -- one provider/model attempt chain --------------------------------------
     async def _call_provider(self, task, messages, *, expect, run_id, rhash,
@@ -324,12 +364,14 @@ class Gateway:
                            component="llm", stage="send", error_type="missing_model",
                            provider=preset.name,
                            hint="Pick a model in Settings (fetch the model list there).")
-        api_key = get_api_key(preset.name) if preset.name != "mock" else "mock"
-        if preset.name != "mock" and not api_key:
+        api_key = "mock" if preset.name == "mock" else (get_api_key(preset.name) or "")
+        if preset.name != "mock" and preset.requires_key and not api_key:
             raise AppError(f"missing API key for provider '{preset.name}'",
                            component="llm", stage="send", error_type="missing_key",
                            provider=preset.name,
                            hint=f"Set {provider_key_env(preset.name)} in .env, or paste the key in Settings.")
+        if not api_key:
+            api_key = "local"  # local OpenAI-compatible servers ignore the bearer value
 
         wire = preset.wire_format
         base = preset.base_url
@@ -389,6 +431,13 @@ class Gateway:
         finally:
             rate_limiter.release(preset.name)
 
+        if getattr(resp, "error_message", None):
+            status = getattr(resp, "error_status", None) or 502
+            raise AppError(
+                f"{status} from {preset.name}: {redact(resp.error_message)}",
+                component="llm", stage="send", provider=preset.name, model=model,
+                http_status=status,
+                hint=_hint_for(preset.name, status, str(resp.error_message)))
         latency_ms = int((time.monotonic() - started) * 1000)
         return resp.text, {
             "provider": preset.name, "model": resp.model or model,
@@ -508,13 +557,13 @@ class Gateway:
             return report
         # auth + (optionally) model listing
         api_key = get_api_key(provider)
-        if not api_key:
+        if not api_key and preset.requires_key:
             report.update(error="missing key",
                           hint=f"Set {provider_key_env(provider)} in .env, or paste the key in Settings.")
             return report
         started = time.monotonic()
         try:
-            ids = await adapters.list_models(preset.base_url, api_key, timeout=20)
+            ids = await adapters.list_models(preset.base_url, api_key or "local", timeout=20)
             report["model_ok"] = True
             listed = ids[:200]
             if model and listed and model not in listed:

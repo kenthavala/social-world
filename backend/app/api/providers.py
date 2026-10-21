@@ -47,12 +47,13 @@ async def provider_models(name: str) -> dict:
         base = preset.base_url
         key_env = preset.key_env
     api_key = get_api_key(name)
-    if not api_key and name != "mock":
+    requires_key = preset.requires_key if preset is not None else True
+    if not api_key and name != "mock" and requires_key:
         raise AppError(f"no key configured for {name}", component="api", stage="models",
                        error_type="missing_key",
                        hint=f"Set {key_env} in .env, or paste the key in Settings.")
     try:
-        ids = await adapters.list_models(base, api_key or "mock", timeout=25)
+        ids = await adapters.list_models(base, api_key or "local", timeout=25)
     except Exception as e:
         raise AppError(f"could not list models from {name}: {type(e).__name__}",
                        component="api", stage="models", provider=name,

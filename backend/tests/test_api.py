@@ -126,6 +126,8 @@ def test_full_run_flow_mines_sse(client, uploaded_source):
     assert detail["status"] == "completed", client.get(f"/api/runs/{run_id}/errors").json()
     posts = client.get(f"/api/runs/{run_id}/posts").json()["posts"]
     assert len(posts) > 0
+    assert all(p["seq"] is not None for p in posts)
+    assert [p["seq"] for p in posts] == sorted(p["seq"] for p in posts)
     agents = client.get(f"/api/runs/{run_id}/agents").json()["agents"]
     assert len(agents) == 6
     metrics = client.get(f"/api/runs/{run_id}/metrics").json()

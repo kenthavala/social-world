@@ -56,12 +56,20 @@ async def start_run(run_id: str) -> None:
     if row["status"] == "running":
         raise AppError("a run is already active; only one run can run at a time",
                        component="engine", stage="start", error_type="conflict", status_code=409)
+    if row["status"] in ("completed", "failed"):
+        raise AppError(f"cannot start a run in state '{row['status']}'",
+                       component="engine", stage="start", status_code=409,
+                       hint="Create a new run to simulate again.")
     old = _tasks.pop(run_id, None)
-    if old and not old.done():
+    try:
+        current = asyncio.current_task()
+    except RuntimeError:
+        current = None
+    if old and old is not current and not old.done():
         old.cancel()
     n = _now()
-    db.execute("UPDATE runs SET status='running', updated_at=?, started_at=COALESCE(started_at, ?)"
-               " WHERE id=?", (n, n, run_id))
+    db.execute("UPDATE runs SET status='running', error_json=NULL, updated_at=?,"
+               " started_at=COALESCE(started_at, ?) WHERE id=?", (n, n, run_id))
     emit(run_id, "run_status", {"status": "running"})
     _rehydrate_scheduled(run_id)
     _tasks[run_id] = asyncio.create_task(_run_worker(run_id))
@@ -193,24 +201,49 @@ async def _run_worker(run_id: str) -> None:
                 used = await do_tick(ctx, tick)
             except BudgetExhausted as e:
                 ctx.budget_exhausted = True
-                db.execute("INSERT INTO events(run_id, tick, kind, payload_json, created_at)"
-                           " VALUES(?,?,?,?,?)",
-                           (run_id, tick, "warning", db.j({"message": f"LLM budget exhausted ({e}); continuing deterministic-only"}), _now()))
-                emit(run_id, "warning", {"message": "LLM budget exhausted; continuing with deterministic actions only"})
-                used = 0
+                _pause_with_reason(run_id, f"LLM budget reached: {e}",
+                                   "Raise this run's call budget, then resume. "
+                                   "Posts from completed rounds are kept.")
+                break
             except AppError as e:
-                _fail_run(run_id, e)
+                if _should_pause(e):
+                    _pause_with_reason(run_id, e.message, e.hint or "")
+                else:
+                    _fail_run(run_id, e)
                 break
             if ctx.failure_streak >= 3 and ctx.failure_rate() > 0.5:
                 ctx.pause_self()
             ctx.last_completed = tick
             emit(run_id, "tick_completed", {"tick": tick, "metrics": ctx.last_metrics})
+            if ctx.budget_exhausted:
+                _pause_with_reason(run_id, "LLM budget reached during this round",
+                                   "Raise this run's call budget, then resume. "
+                                   "The round's fallback posts are recorded and marked.")
+                break
         # graceful exit states are set above or by stop/pause
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
         _fail_run(run_id, AppError(f"engine crashed: {type(e).__name__}: {e}",
                                    component="engine", stage="tick", error_type="internal"))
+
+
+def _should_pause(e: AppError) -> bool:
+    """Provider/config failures a person can fix: pause and keep the run resumable."""
+    if e.error_type in ("missing_key", "missing_config", "provider_failed"):
+        return True
+    return bool(e.http_status in (401, 402, 403, 429) or (e.http_status or 0) >= 500)
+
+
+def _pause_with_reason(run_id: str, message: str, hint: str = "") -> None:
+    """Pause (not fail) at a round boundary, recording exactly why."""
+    db.execute(
+        "UPDATE runs SET status='paused', error_json=?, updated_at=? WHERE id=?",
+        (db.j({"message": message, "hint": hint, "error_type": "paused",
+               "provider": None, "model": None}), _now(), run_id))
+    tick = db.scalar("SELECT last_completed_tick FROM runs WHERE id=?", (run_id,)) or 0
+    log_event(run_id, tick, "warning", {"message": message, "paused": True, "hint": hint})
+    emit(run_id, "run_status", {"status": "paused", "reason": message})
 
 
 def _fail_run(run_id: str, e: AppError) -> None:
@@ -252,12 +285,19 @@ class Context:
         self.failure_streak = 0
         self.baseline_calls = current_used(run_id)
         self._post_seq: dict[int, int] = {}
+        self._run_seq = int(db.scalar(
+            "SELECT COALESCE(MAX(seq),0) FROM posts WHERE run_id=?", (run_id,)) or 0)
+        self.write_meta: dict[str, dict] = {}
         self._rng_tick: Optional[int] = None
 
     def next_post_seq(self, tick: int) -> int:
         n = self._post_seq.get(tick, 0)
         self._post_seq[tick] = n + 1
         return n
+
+    def next_run_seq(self) -> int:
+        self._run_seq += 1
+        return self._run_seq
 
     def failure_rate(self) -> float:
         if not self.failure_history:
@@ -322,7 +362,9 @@ def _post_from_row(r) -> dict:
             "stance": db.uj(r["stance_json"], {}) or {}, "emotion": r["emotion"] or "",
             "cited": db.uj(r["cited_chunk_ids_json"], []) or [],
             "likes": r["likes"], "reposts": r["reposts"], "replies": r["replies"],
-            "is_fallback": r["is_fallback"], "run_id": r["run_id"]}
+            "is_fallback": r["is_fallback"], "run_id": r["run_id"],
+            "seq": r["seq"], "model": r["model"], "provider": r["provider"],
+            "via_fallback": r["via_fallback"]}
 
 
 # ---------------------------------------------------------------------------
@@ -380,12 +422,36 @@ async def seed_run(run_id: str, gateway) -> int:
             agents.append(agent)
     edges = seeding.initial_edges(agents, rng)
     persist_agents(run_id, agents, edges)
+    # A stop/pause requested while personas were generating must win: never flip an
+    # interrupted run back to 'ready' behind the user's back.
+    current = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
+    final_status = current if current in ("interrupted", "failed", "paused") else "ready"
     db.execute(
-        "UPDATE runs SET status='ready', last_completed_tick=0, rng_state=?,"
-        " llm_calls_used=0, updated_at=? WHERE id=?", ("0", _now(), run_id))
-    emit(run_id, "run_status", {"status": "ready", "agents": len(agents),
+        "UPDATE runs SET status=?, last_completed_tick=0, rng_state=?,"
+        " llm_calls_used=0, updated_at=? WHERE id=?", (final_status, "0", _now(), run_id))
+    emit(run_id, "run_status", {"status": final_status, "agents": len(agents),
                                 "fallback_personas": fallback_count})
     return len(agents)
+
+
+async def seed_and_start(run_id: str, gateway, *, resume: bool = False) -> None:
+    """Background path for Start/Resume: seed if needed, then run. Never leaves
+    a client disconnect responsible for finishing a seed."""
+    try:
+        if (db.scalar("SELECT COUNT(*) FROM agents WHERE run_id=?", (run_id,)) or 0) == 0:
+            await seed_run(run_id, gateway)
+        status = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
+        allowed = {"ready", "paused", "interrupted", "draft"} if resume else {"ready", "draft"}
+        if status in allowed:
+            await start_run(run_id)
+    except BudgetExhausted as e:
+        _pause_with_reason(run_id, f"LLM budget reached while seeding: {e}",
+                           "Raise the run's call budget, then resume.")
+    except AppError as e:
+        if _should_pause(e):
+            _pause_with_reason(run_id, e.message, e.hint or "")
+        else:
+            _fail_run(run_id, e)
 
 
 def random_rng(seed: int) -> __import__("random").Random:
@@ -626,6 +692,8 @@ async def do_tick(ctx: Context, tick: int) -> int:
 
     for a in speakers:
         spec = per_agent_action[a["id"]]
+        if a["id"] in ctx.write_meta:
+            spec["write_meta"] = ctx.write_meta[a["id"]]
         item: Any = spec.get("item")
         if item is None:
             wi = items_by_agent.get(a["id"])
@@ -636,7 +704,9 @@ async def do_tick(ctx: Context, tick: int) -> int:
         if post is None:
             fallback_count += 1
             item = fallback_repost(a, ctx, rng, tick)
-            post = materialize_post(ctx, tick, a, item, {"action": "repost", "target": None}, rng)
+            post = materialize_post(ctx, tick, a, item,
+                                    {"action": "repost", "target": None,
+                                     "fallback_template": True}, rng)
         if post is not None:
             new_posts.append(post)
             emit(run_id, "post_created", {"post": post})
@@ -828,6 +898,8 @@ async def _write_batch_call(ctx: Context, tick: int, batch: list[dict],
     result = await _gateway().complete("write", messages, expect=WriteItem,
                                        run_id=ctx.run_id, max_items=len(batch))
     items = result.parsed if isinstance(result.parsed, list) else [result.parsed]
+    meta = {"model": result.model, "provider": result.provider,
+            "from_cache": result.from_cache}
     seen_ids: set[str] = set()
     for item in items:
         if item is None or not item.agent_id or item.agent_id in seen_ids:
@@ -835,6 +907,7 @@ async def _write_batch_call(ctx: Context, tick: int, batch: list[dict],
         seen_ids.add(item.agent_id)
         if any(a["id"] == item.agent_id for a in batch):
             items_by_agent[item.agent_id] = item
+            ctx.write_meta[item.agent_id] = meta
 
 
 def _gateway():
@@ -888,6 +961,20 @@ def materialize_post(ctx: Context, tick: int, agent: dict, item: WriteItem,
                        "confidence": round(float(agent["stances"].get(iid, {}).get("confidence", 0.5)), 3)}
     cited = [c for c in (item.cited_chunk_ids or []) if c in ctx.chunk_ids][:4]
     seq = ctx.next_post_seq(tick)
+    meta = spec.get("write_meta") or {}
+    fallback_template = bool(spec.get("fallback_template"))
+    configured = ctx.run.get("provider_json") or {}
+    if isinstance(configured, str):
+        configured = db.uj(configured, {}) or {}
+    cfg_provider = configured.get("name")
+    cfg_model = configured.get("model")
+    via_fallback = 0
+    if fallback_template:
+        via_fallback = 1
+    elif cfg_provider != "mock" and meta:
+        if (meta.get("provider") and cfg_provider and meta["provider"] != cfg_provider) or \
+           (meta.get("model") and cfg_model and meta["model"] != cfg_model):
+            via_fallback = 1
     return {
         "id": content_pid(agent["id"], tick, seq, item.text[:600]), "run_id": ctx.run_id, "tick": tick, "agent_id": agent["id"],
         "kind": action if action == "reply" else ("repost" if spec.get("action") == "repost" else action),
@@ -895,6 +982,10 @@ def materialize_post(ctx: Context, tick: int, agent: dict, item: WriteItem,
         "emotion": (item.emotion or "neutral")[:20], "cited": cited,
         "likes": 0, "reposts": 0, "replies": 0,
         "is_fallback": 1 if spec.get("action") == "repost" else 0, "agent": agent,
+        "seq": ctx.next_run_seq(),
+        "model": "template" if fallback_template else (meta.get("model") or None),
+        "provider": "deterministic" if fallback_template else (meta.get("provider") or None),
+        "via_fallback": via_fallback,
     }
 
 
@@ -946,14 +1037,24 @@ async def reflection(ctx: Context, tick: int) -> int:
 
 def commit_tick(ctx: Context, tick: int, new_posts: list[dict]) -> None:
     with db.tx() as conn:
+        max_seq = conn.execute(
+            "SELECT COALESCE(MAX(seq),0) s FROM posts WHERE run_id=?", (ctx.run_id,)
+        ).fetchone()["s"] or 0
         for p in new_posts:
+            if p.get("seq") is None:
+                max_seq += 1
+                p["seq"] = max_seq
+            else:
+                max_seq = max(max_seq, int(p["seq"]))
             conn.execute(
                 "INSERT OR REPLACE INTO posts(id, run_id, tick, agent_id, kind, parent_id, text,"
-                " stance_json, emotion, cited_chunk_ids_json, likes, reposts, replies, is_fallback)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " stance_json, emotion, cited_chunk_ids_json, likes, reposts, replies, is_fallback,"
+                " seq, model, provider, via_fallback)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (p["id"], ctx.run_id, tick, p["agent_id"], p["kind"], p["parent_id"],
                  p["text"], db.j(p["stance"]), p["emotion"], db.j(p["cited"]),
-                 0, 0, 0, p.get("is_fallback", 0)))
+                 0, 0, 0, p.get("is_fallback", 0), p["seq"], p.get("model"),
+                 p.get("provider"), p.get("via_fallback", 0)))
             if p.get("agent") is not None:
                 # keep agent handle on the runtime object
                 p.setdefault("handle", p["agent"]["handle"])

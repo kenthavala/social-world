@@ -8,13 +8,16 @@ import httpx
 
 class WireResponse:
     def __init__(self, text: str, reasoning_seen: bool, finish_reason: Optional[str],
-                 tokens_in: Optional[int], tokens_out: Optional[int], model: Optional[str]):
+                 tokens_in: Optional[int], tokens_out: Optional[int], model: Optional[str],
+                 error_status: Optional[int] = None, error_message: Optional[str] = None):
         self.text = text
         self.reasoning_seen = reasoning_seen
         self.finish_reason = finish_reason
         self.tokens_in = tokens_in
         self.tokens_out = tokens_out
         self.model = model
+        self.error_status = error_status
+        self.error_message = error_message
 
 
 def _join_system(messages: list[dict]) -> tuple[Optional[str], list[dict]]:
@@ -24,13 +27,31 @@ def _join_system(messages: list[dict]) -> tuple[Optional[str], list[dict]]:
     return system, rest
 
 
+def _merge_system(messages: list[dict]) -> list[dict]:
+    """Some hosted open-weight models (notably NVIDIA NIM) accept only one system
+    message. Merging is semantically identical for our prompts."""
+    system, rest = _join_system(messages)
+    return ([{"role": "system", "content": system}] if system else []) + rest
+
+
+def _error_status(message: str) -> int:
+    low = message.lower()
+    if any(w in low for w in ("insufficient", "credit", "balance", "quota", "payment")):
+        return 402
+    if any(w in low for w in ("rate limit", "too many requests")):
+        return 429
+    if any(w in low for w in ("unauthor", "forbidden", "invalid api key", "authentication")):
+        return 401
+    return 502
+
+
 async def openai_chat(base_url: str, model: str, messages: list[dict], *,
                       api_key: str, temperature: float, max_tokens: int,
                       timeout: int, extra_headers: dict | None = None) -> WireResponse:
     headers = {"Authorization": f"Bearer {api_key}", **(extra_headers or {})}
     body = {
         "model": model,
-        "messages": messages,
+        "messages": _merge_system(messages),
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
@@ -44,6 +65,13 @@ async def openai_chat(base_url: str, model: str, messages: list[dict], *,
                 request=resp.request, response=resp,
             )
         data = resp.json()
+    # OpenRouter (and some proxies) can put an error object inside a 200 response.
+    body_error = data.get("error")
+    if body_error:
+        msg = body_error.get("message") if isinstance(body_error, dict) else str(body_error)
+        return WireResponse("", False, "error", None, None, data.get("model"),
+                            error_status=_error_status(msg or ""),
+                            error_message=msg or "provider returned an error object")
     choice = (data.get("choices") or [{}])[0]
     message = choice.get("message") or {}
     text = message.get("content") or ""
@@ -51,6 +79,10 @@ async def openai_chat(base_url: str, model: str, messages: list[dict], *,
     if not text:
         reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
         text = reasoning
+    if choice.get("finish_reason") == "error":
+        return WireResponse("", False, "error", None, None, data.get("model"),
+                            error_status=502,
+                            error_message="the provider reported finish_reason=error")
     usage = data.get("usage") or {}
     return WireResponse(
         text=text, reasoning_seen=bool(reasoning), finish_reason=choice.get("finish_reason"),
@@ -86,6 +118,12 @@ async def anthropic_messages(base_url: str, model: str, messages: list[dict], *,
                 request=resp.request, response=resp,
             )
         data = resp.json()
+    if data.get("type") == "error" or data.get("error"):
+        err = data.get("error") or {}
+        msg = err.get("message") if isinstance(err, dict) else str(err)
+        msg = msg or "provider returned an error object"
+        return WireResponse("", False, "error", None, None, data.get("model"),
+                            error_status=_error_status(msg), error_message=msg)
     content = data.get("content") or []
     text = "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
     reasoning = "".join(

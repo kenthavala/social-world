@@ -11,15 +11,18 @@ from fastapi.staticfiles import StaticFiles
 from app import db
 from app.api import providers, runs, settings, sources, export
 from app.errors import AppError, redact
+from app.logsafe import install as install_redaction
 from app.sim import engine
+from app.version import APP_VERSION, PRODUCT_NAME
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logging.getLogger("sse_starlette").setLevel(logging.WARNING)
+install_redaction()
 
-app = FastAPI(title="OASIS-Lite", version="1.0.0")
+app = FastAPI(title=PRODUCT_NAME, version=APP_VERSION)
 
 app.include_router(sources.router)
 app.include_router(runs.router)
@@ -56,6 +59,12 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 def startup() -> None:
     db.connect()
     engine.recover_on_startup()
+    try:
+        from app.examples import ensure_sample_world
+        ensure_sample_world()
+    except Exception:  # noqa: BLE001 — the sample world must never block startup
+        import logging
+        logging.getLogger("app.main").warning("sample world import failed", exc_info=True)
 
 
 @app.get("/api/health")
