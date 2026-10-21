@@ -35,6 +35,6 @@ echo [OASIS-Lite] Starting server on http://127.0.0.1:8000 ...
 REM Open the browser a few seconds later, once uvicorn is actually listening.
 start "" /min powershell -NoProfile -Command "Start-Sleep -Seconds 5; Start-Process 'http://127.0.0.1:8000'"
 pushd backend
-".venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+"..\.venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 popd
 pause
