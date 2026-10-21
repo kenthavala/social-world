@@ -1,4 +1,4 @@
-"""Playwright screenshot helper for OASIS-Lite (exact viewports, HTTP only).
+"""Playwright screenshot helper for The Social World (exact viewports, HTTP only).
 
 Usage:
   python tools/shots.py <series> <out_dir> [run_url_path]

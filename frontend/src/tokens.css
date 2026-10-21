@@ -1,9 +1,8 @@
 /* ==========================================================
-   OASIS_SIM — design tokens · v1.0 (from the approved design
-   reference; dark is the default theme, .light on the root
-   swaps every token). Components read semantic tokens only —
-   never raw hex values.
-   Legacy var names (--ac, --ev) are kept as aliases so older
+   The Social World — design tokens · v1.1
+   Dark is the default; .light on the root swaps every token.
+   Components read semantic tokens only — never raw hex values.
+   Legacy aliases (--ac, --ev, --bg-0…) are kept so older
    components restyle automatically.
    ========================================================== */
 :root,
@@ -62,6 +61,20 @@
   --warn: #E3BF4B; --warn-fg: #EDD07A; --warn-soft: rgba(227, 191, 75, 0.11); --warn-line: rgba(227, 191, 75, 0.42);
   --err: #F2706B;  --err-fg: #F79591;  --err-soft: rgba(242, 112, 107, 0.11); --err-line: rgba(242, 112, 107, 0.42);
 
+  /* ---- source material: real document text only ---- */
+  --source: #D6C6A1; --source-soft: rgba(214, 198, 161, 0.10); --source-line: rgba(214, 198, 161, 0.40);
+
+  /* ---- brand mark ---- */
+  --brand-ring: #808994; --brand-ink: #E8EBEF;
+
+  /* ---- semantic aliases (new components read these names) ---- */
+  --bg: var(--bg-0); --surface: var(--bg-1); --surface-raised: var(--bg-2);
+  --surface-hover: var(--bg-3); --border: var(--line-2); --hairline: var(--line-1);
+  --text: var(--fg-1); --text-secondary: var(--fg-2); --text-muted: var(--fg-3);
+  --success: var(--ok); --warning: var(--warn); --error: var(--err);
+  --accent-hover: var(--accent-fg); --stance-pro: var(--pro);
+  --stance-neutral: var(--neu); --stance-con: var(--con); --event: var(--evt);
+
   /* ---- effects ---- */
   --scrim: rgba(4, 6, 8, 0.62);
   --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
@@ -103,6 +116,9 @@
   --ok: #1E9A62;  --ok-fg: #137247;  --ok-soft: rgba(30, 154, 98, 0.09);  --ok-line: rgba(30, 154, 98, 0.38);
   --warn: #B38600; --warn-fg: #7D5E00; --warn-soft: rgba(179, 134, 0, 0.10); --warn-line: rgba(179, 134, 0, 0.40);
   --err: #D2433D; --err-fg: #A9302B; --err-soft: rgba(210, 67, 61, 0.08); --err-line: rgba(210, 67, 61, 0.38);
+
+  --source: #7A5C1E; --source-soft: rgba(122, 92, 30, 0.07); --source-line: rgba(122, 92, 30, 0.35);
+  --brand-ring: #5F6874; --brand-ink: #12151A;
 
   --scrim: rgba(18, 21, 26, 0.32);
   --shadow-pop: 0 16px 40px rgba(18, 21, 26, 0.16);

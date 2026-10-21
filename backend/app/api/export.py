@@ -153,7 +153,7 @@ def _bundle_md(data: dict) -> str:
         by_status[c.get("status") or "?"] = by_status.get(c.get("status") or "?", 0) + 1
     call_line = " · ".join(f"{k} {v}" for k, v in sorted(by_status.items())) or "0 calls"
     lines = [
-        f"# OASIS-Lite run: {run['name']}",
+        f"# The Social World run: {run['name']}",
         "",
         f"- status: {run['status']} · ticks done: {run.get('ticks_done')} ·"
         f" llm calls: {run.get('llm_calls_used')}",

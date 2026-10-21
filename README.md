@@ -1,4 +1,4 @@
-# OASIS-Lite
+# The Social World
 
 Local-first, multi-agent social simulation. Upload a document (PDF/TXT/MD/DOCX),
 describe a scenario, and watch LLM-driven agents seed, debate, react, follow and

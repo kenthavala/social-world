@@ -152,7 +152,7 @@ def test_full_run_flow_mines_sse(client, uploaded_source):
     names = _zip.ZipFile(_io.BytesIO(csvz.content)).namelist()
     assert "posts.csv" in names and "llm_calls.csv" in names and "stance_history.csv" in names
     md = client.get(f"/api/runs/{run_id}/export?format=md")
-    assert md.status_code == 200 and "OASIS-Lite run" in md.text
+    assert md.status_code == 200 and "The Social World run" in md.text
     assert "LLM calls by outcome" in md.text
     # second active run refused while... (run already completed, so: create + start quickly blocked)
     client.post(f"/api/runs/{run_id}/events", json={"text": "Breaking change!"})

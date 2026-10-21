@@ -2,9 +2,9 @@
 @tailwind components;
 
 /* =====================================================================
-   OASIS_SIM — component styles · v1.0 (from the approved design reference)
-   Class names here are the reference vocabulary. Components read semantic
-   tokens only (tokens.css). Tailwind utilities still win where both apply.
+   The Social World — component styles · v1.1
+   Components read semantic tokens only (tokens.css). Tailwind utilities
+   still win where both apply.
    ===================================================================== */
 
 :root { color-scheme: dark; }
@@ -23,11 +23,10 @@ body { background: var(--bg-0); color: var(--fg-1); }
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
-.mo a:not([class]) { color: inherit; text-decoration: none; }
-.mo button:not([class]) { font: inherit; color: inherit; }
-.mo a { text-decoration: none; }
-.mo button { font: inherit; }
-.mo p, .mo h1, .mo h2, .mo h3, .mo h4 { margin: 0; }
+/* Zero-specificity resets: they must never outrank .btn-primary's colours. */
+:where(.mo a) { color: inherit; text-decoration: none; }
+:where(.mo button) { font: inherit; color: inherit; }
+:where(.mo p, .mo h1, .mo h2, .mo h3, .mo h4) { margin: 0; }
 .mo ::selection { background: var(--accent-soft); }
 .mo :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="range"] { accent-color: var(--accent); }
@@ -35,7 +34,7 @@ input[type="range"] { accent-color: var(--accent); }
 /* ---------------------------------------------------------------- type */
 .mono { font-family: var(--font-mono); }
 .num { font-variant-numeric: tabular-nums; }
-.eyebrow { font-family: var(--font-mono); font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: .07em; text-transform: uppercase; color: var(--fg-3); }
+.eyebrow { font-family: var(--font-sans); font-size: 11.5px; line-height: 16px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--fg-3); }
 .t-display { font-size: 30px; line-height: 38px; font-weight: 600; letter-spacing: -.02em; }
 .t-h1 { font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -.012em; }
 .t-h2 { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -.005em; }
@@ -61,7 +60,10 @@ input[type="range"] { accent-color: var(--accent); }
 .side { flex: 1 1 224px; display: flex; flex-direction: column; gap: 2px; padding: 14px 12px 12px; border-right: 1px solid var(--line-1); background: var(--bg-0); min-height: 0; }
 .main { position: relative; flex: 999 1 560px; min-width: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-0); }
 .scroll { overflow-y: auto; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
-.wordmark { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 8px; margin-bottom: 14px; font-family: var(--font-mono); font-weight: 600; font-size: 13px; letter-spacing: .06em; color: var(--fg-1); }
+.wordmark { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 8px; margin-bottom: 14px; font-family: var(--font-sans); font-weight: 500; font-size: 14px; letter-spacing: 0; color: var(--fg-1); white-space: nowrap; }
+.wordmark .wm-the { color: var(--fg-2); font-weight: 400; }
+.wordmark .wm-name { font-weight: 500; }
+.wordmark:hover .wm-name { color: var(--fg-1); }
 .wordmark .wm-dim { color: var(--fg-3); }
 .side-label { padding: 16px 10px 6px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-1); }
@@ -200,7 +202,7 @@ textarea.input, textarea.textarea { min-height: 104px; resize: vertical; line-he
 .st-evt { color: var(--evt-fg); background: var(--evt-soft); border-color: var(--evt-line); }
 
 /* ---------------------------------------------------------------- status */
-.status { display: inline-flex; align-items: center; gap: 7px; height: 22px; padding: 0 8px; border-radius: var(--r-1); font: 500 10.5px/1 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; flex: none; border: 1px solid transparent; }
+.status { display: inline-flex; align-items: center; gap: 7px; height: 22px; padding: 0 8px; border-radius: var(--r-1); font: 500 12px/1 var(--font-sans); letter-spacing: 0; text-transform: none; white-space: nowrap; flex: none; border: 1px solid transparent; }
 .status .ic-xs { margin: 0 -1px; }
 .status-running { color: var(--accent-fg); background: var(--accent-soft); border-color: var(--accent-line); }
 .status-paused { color: var(--warn-fg); background: var(--warn-soft); border-color: rgba(227,191,75,.35); }
@@ -249,7 +251,7 @@ textarea.input, textarea.textarea { min-height: 104px; resize: vertical; line-he
 
 /* ---------------------------------------------------------------- tables */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-.tbl th { font: 500 10.5px/1 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--fg-3); text-align: left; padding: 0 16px; height: 36px; border-bottom: 1px solid var(--line-1); white-space: nowrap; }
+.tbl th { font: 500 11.5px/1 var(--font-sans); letter-spacing: 0; text-transform: none; color: var(--fg-3); text-align: left; padding: 0 16px; height: 36px; border-bottom: 1px solid var(--line-1); white-space: nowrap; }
 .tbl th.r, .tbl td.r { text-align: right; }
 .tbl td { padding: 0 16px; height: 56px; border-bottom: 1px solid var(--line-1); vertical-align: middle; }
 .tbl tbody tr { transition: background var(--dur-1) var(--ease); }
@@ -287,14 +289,14 @@ button.list-row { border-left: 0; border-right: 0; border-top: 0; background: tr
 .post-src { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .post-src .eyebrow { margin-right: 2px; font-size: 10.5px; }
 
-.cite { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--bg-1); font: 400 11.5px/1 var(--font-mono); color: var(--fg-3); cursor: pointer; transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), color var(--dur-1); white-space: nowrap; }
-.cite .ic-xs { color: var(--fg-3); transition: color var(--dur-1); }
-.cite .cite-p { color: var(--fg-1); font-weight: 500; }
-.cite .cite-sep { color: var(--fg-4); }
-.cite:hover { border-color: var(--accent-line); background: var(--accent-soft); color: var(--fg-2); }
-.cite:hover .ic-xs { color: var(--accent-fg); }
-.cite[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--fg-2); }
-.cite[aria-expanded="true"] .ic-xs { color: var(--accent-fg); }
+.cite { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 6px; border: 1px solid var(--source-line); border-radius: var(--r-1); background: var(--source-soft); font: 400 11.5px/1 var(--font-mono); color: var(--source); cursor: pointer; transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), color var(--dur-1); white-space: nowrap; }
+.cite .ic-xs { color: var(--source); transition: color var(--dur-1); }
+.cite .cite-p { color: var(--source); font-weight: 500; }
+.cite .cite-sep { color: var(--source); opacity: .55; }
+.cite:hover { border-color: var(--source); background: var(--source-soft); color: var(--source); }
+.cite:hover .ic-xs { color: var(--source); }
+.cite[aria-expanded="true"] { border-color: var(--source); background: var(--source-soft); color: var(--source); }
+.cite[aria-expanded="true"] .ic-xs { color: var(--source); }
 .cite.is-missing { border-style: dashed; cursor: default; }
 .cite.is-missing .cite-p { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-4); }
 .cite:disabled { opacity: .45; cursor: not-allowed; }
@@ -357,6 +359,13 @@ button.tk:hover { box-shadow: inset 0 0 0 1px var(--line-3); }
 .future-fill { background-image: repeating-linear-gradient(135deg, transparent 0 7px, var(--grid-dot) 7px 8px); }
 .dotgrid { background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.2px); background-size: 18px 18px; }
 
+/* Provenance: real document material is paper-toned. Generated prose has no hue. */
+.source-text { background: var(--source-soft); border: 1px solid var(--source-line); border-radius: var(--r-2); }
+.generated { border: 1px dashed var(--line-3); border-radius: var(--r-2); background: transparent; }
+.generated-tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border: 1px dashed var(--line-3); border-radius: var(--r-1); color: var(--fg-3); font: 500 11px/1 var(--font-sans); white-space: nowrap; }
+.mock-stripe { background-color: var(--warn-soft); background-image: repeating-linear-gradient(135deg, transparent 0 8px, var(--grid-dot) 8px 9px); border: 1px solid var(--warn-line); }
+.mock-watermark { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; transform: rotate(-18deg); font: 600 48px/1 var(--font-sans); letter-spacing: .08em; color: var(--fg-3); opacity: .10; }
+
 .dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 40px 24px; border: 1px dashed var(--line-3); border-radius: var(--r-3); background: var(--bg-1); cursor: pointer; transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease); width: 100%; }
 .dropzone:hover, .dropzone.is-hover { border-color: var(--accent); background: var(--accent-soft); }
 .dropzone.is-drag { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
@@ -402,6 +411,7 @@ button.tk:hover { box-shadow: inset 0 0 0 1px var(--line-3); }
 @keyframes oz-sheet-in { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes oz-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes oz-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes brand-draw { from { stroke-dashoffset: 132; } to { stroke-dashoffset: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   .mo *, .mo *::before, .mo *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }

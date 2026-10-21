@@ -1,4 +1,6 @@
-# OASIS-Lite — M1 Report
+# The Social World — M1 Report
+
+_Historical report: delivered under the working name OASIS-Lite; renamed in M5._
 
 Date: 2026-10-20 · M1 vertical slice, per `docs/MASTER_BUILD_PROMPT.md` (§4, §14, §15, §16).
 

@@ -1,4 +1,4 @@
-"""QA screenshots for OASIS_SIM — every core page at the mandated viewports.
+"""QA screenshots for The Social World — every core page at the mandated viewports.
 
 Usage:
   python tools/qa_shots.py [base_url] [out_dir]

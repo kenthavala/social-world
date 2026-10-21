@@ -598,7 +598,7 @@ function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError }: {
               <circle cx="8" cy="8" r="6" /><path d="M8 7v4" /><path d="M8 5v.01" />
             </svg>
             <span>
-              This is the chunk the agent referenced when writing the post. OASIS_SIM records the
+              This is the chunk the agent referenced when writing the post. The Social World records the
               reference; it does not check that the post represents the source accurately.
             </span>
           </div>

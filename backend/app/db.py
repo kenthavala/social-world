@@ -45,7 +45,6 @@ CREATE TABLE IF NOT EXISTS posts(
   seq INTEGER, model TEXT, provider TEXT, via_fallback INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_posts_run_tick ON posts(run_id, tick);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_run_seq ON posts(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_posts_run_agent ON posts(run_id, agent_id);
 CREATE TABLE IF NOT EXISTS reactions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, tick INTEGER, agent_id TEXT,

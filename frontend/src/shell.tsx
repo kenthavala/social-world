@@ -7,6 +7,7 @@ import type { Route } from "./router";
 import { hrefFor } from "./router";
 import * as api from "./api";
 import type { Provider, RunListItem } from "./types";
+import { Wordmark } from "./Brand";
 
 export type { Route };
 
@@ -80,17 +81,6 @@ const MoonIcon = () => (
   <svg className="ic-sm" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
     <path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z" />
   </svg>
-);
-
-const Wordmark = ({ compact }: { compact?: boolean }) => (
-  <a className="wordmark" href="#/" aria-label="OASIS_SIM home" style={compact ? { marginBottom: 0 } : undefined}>
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
-      <rect x="1" y="1" width="18" height="18" rx="5" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="10" cy="10" r="5.2" stroke="currentColor" strokeWidth="1.2" strokeDasharray="1.6 2.2" opacity=".6" />
-      <circle cx="10" cy="10" r="2" style={{ fill: "var(--accent)" }} />
-    </svg>
-    <span>OASIS<span className="wm-dim">_SIM</span></span>
-  </a>
 );
 
 interface ShellState {

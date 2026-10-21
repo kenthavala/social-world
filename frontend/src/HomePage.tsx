@@ -1,4 +1,4 @@
-// Home: what OASIS is, what a simulation is, how to start, and what already exists.
+// Home: what The Social World is, what a simulation is, how to start, and what already exists.
 // The active run gets the tick ruler; everything else is a clean library view.
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Upload } from "lucide-react";

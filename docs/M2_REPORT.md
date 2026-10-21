@@ -1,8 +1,10 @@
-# OASIS_SIM — M2 Report
+# The Social World — M2 Report
+
+_Historical report: delivered under the working names OASIS_SIM / OASIS-Lite; renamed in M5._
 
 **Branch:** `agent/m2-master` · **Date:** 2026-10-20 · **Baseline:** M1 vertical slice (`3a6a586`)
 
-M2 turned the working M1 implementation into a polished OASIS-style product: a real design
+M2 turned the working M1 implementation into a polished social-simulation product: a real design
 system, a wizard, a 7-tab run room, persistent events, deterministic reports, a settings
 page with inspectable redaction, responsive layout, and evidence that the engine runs on a
 real LLM provider — while preserving every M1 guarantee (SQLite-first, additive migrations,
