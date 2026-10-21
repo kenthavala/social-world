@@ -53,6 +53,7 @@ export interface RulerCell {
   n: number;                       // 1-based tick number
   pro: number; neu: number; con: number;   // post counts
   total: number;
+  max: number;                     // global max across ticks (proportional heights)
   cls: string;                     // "tk is-current is-future …"
   ax: string;                      // axis label (sparse)
   axCls: string;
@@ -60,28 +61,33 @@ export interface RulerCell {
 }
 
 // Posts per tick by stance, derived from the run's real posts (never fabricated).
-export function buildRuler(posts: Post[], totalTicks: number, currentTick: number): RulerCell[] {
+// highlightTick = the in-progress tick (0 = none, e.g. a finished run).
+export function buildRuler(posts: Post[], totalTicks: number, highlightTick: number): RulerCell[] {
   const counts = new Map<number, { pro: number; neu: number; con: number }>();
   for (const p of posts) {
     const c = counts.get(p.tick) ?? { pro: 0, neu: 0, con: 0 };
     c[postOverallStance(p)] += 1;
     counts.set(p.tick, c);
   }
+  const nTicks = Math.max(1, totalTicks);
+  let globalMax = 1;
+  counts.forEach((c) => { globalMax = Math.max(globalMax, c.pro + c.neu + c.con); });
   const cells: RulerCell[] = [];
-  const labelEvery = totalTicks > 32 ? 8 : totalTicks > 16 ? 4 : 2;
-  for (let i = 1; i <= Math.max(1, totalTicks); i++) {
+  const labelEvery = nTicks > 32 ? 8 : 4;
+  for (let i = 1; i <= nTicks; i++) {
     const c = counts.get(i) ?? { pro: 0, neu: 0, con: 0 };
     const total = c.pro + c.neu + c.con;
-    const cur = i === currentTick;
-    const fut = i > currentTick;
+    const cur = i === highlightTick;
+    const fut = highlightTick > 0 && i > highlightTick;
     const cls = "tk" + (cur ? " is-current" : "") + (fut ? " is-future" : "");
     const label = String(i).padStart(2, "0");
     cells.push({
       n: i,
       ...c,
       total,
+      max: globalMax,
       cls,
-      ax: i === 1 || i === totalTicks || i % labelEvery === 0 ? label : "",
+      ax: i === 1 || i === nTicks || i % labelEvery === 0 ? label : "",
       axCls: cur ? "cur" : "",
       tip: total > 0
         ? `Tick ${label}${cur ? " (in progress)" : ""} · ${total} post${total === 1 ? "" : "s"} — PRO ${c.pro} · NEUTRAL ${c.neu} · CON ${c.con}`
@@ -91,13 +97,12 @@ export function buildRuler(posts: Post[], totalTicks: number, currentTick: numbe
   return cells;
 }
 
-// Segment heights for one ruler cell (stacked con/neu/pro, max 100%).
+// Segment heights for one ruler cell (stacked con/neu/pro, proportional to the global max).
 export function rulerSegs(cell: RulerCell): { cls: string; h: number }[] {
-  const max = Math.max(1, cell.pro, cell.neu, cell.con);
   return [
-    { cls: "s-con", h: (cell.con / max) * 100 },
-    { cls: "s-neu", h: (cell.neu / max) * 100 },
-    { cls: "s-pro", h: (cell.pro / max) * 100 },
+    { cls: "s-con", h: (cell.con / cell.max) * 100 },
+    { cls: "s-neu", h: (cell.neu / cell.max) * 100 },
+    { cls: "s-pro", h: (cell.pro / cell.max) * 100 },
   ].filter((s) => s.h > 0);
 }
 

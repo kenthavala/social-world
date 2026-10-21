@@ -108,10 +108,13 @@ export default function RunPage({ runId, onBack, onError }: {
   }, [run?.source_id, posts.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalTicks = run?.config?.ticks ?? 0;
-  const currentTick = run ? Math.min(Math.max(run.current_tick || (run.last_completed_tick || 0), 1), Math.max(1, totalTicks)) : 1;
+  const isActive = !!run && ["running", "seeding", "paused"].includes(run.status);
+  const clampTick = (t: number) => Math.min(Math.max(t || 0, 1), Math.max(1, totalTicks));
+  const displayTick = run ? clampTick(run.current_tick || run.last_completed_tick) : 1;
+  const highlightTick = isActive ? displayTick : 0; // only a live run has an in-progress tick
   const ruler = useMemo(
-    () => buildRuler(posts, totalTicks, currentTick),
-    [posts, totalTicks, currentTick]);
+    () => buildRuler(posts, totalTicks, highlightTick),
+    [posts, totalTicks, highlightTick]);
 
   if (!run) return <div className="px-8 py-6"><Spinner label="Loading run…" /></div>;
 
@@ -200,7 +203,7 @@ export default function RunPage({ runId, onBack, onError }: {
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <div className="flex items-baseline gap-2.5">
                   <span className="eyebrow">Tick</span>
-                  <span className="stat-v">{String(currentTick).padStart(2, "0")}<span className="of"> / {totalTicks}</span></span>
+                  <span className="stat-v">{String(displayTick).padStart(2, "0")}<span className="of"> / {totalTicks}</span></span>
                   <span className="t-meta">{tickNote}</span>
                 </div>
                 <span className="t-meta flex gap-3">
@@ -223,20 +226,25 @@ export default function RunPage({ runId, onBack, onError }: {
                 </div>
               </div>
             </div>
-            <dl className="m-0 grid flex-1 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5" style={{ borderLeft: "1px solid var(--line-1)" }}>
+            <dl className="m-0 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+                style={{ flex: "1 1 480px", borderLeft: "1px solid var(--line-1)" }}>
               {[
-                { icon: MessageSquare, label: "Posts", val: String(run.posts), sub: null },
-                { icon: Users, label: "Agents", val: String(agentCount), sub: null },
-                { icon: Zap, label: "LLM calls", val: String(run.llm_calls_used), sub: run.max_llm_calls != null ? `budget ${run.max_llm_calls}` : null },
-                { icon: Clock, label: "Elapsed", val: elapsed, sub: null },
-                { icon: Gauge, label: "Health", val: run.error ? "error" : connected ? "streaming" : run.status, sub: run.error ? "see Log tab" : null },
+                { label: "Posts", val: String(run.posts), sub: null as string | null },
+                { label: "Agents", val: String(agentCount), sub: null },
+                { label: "LLM calls", val: String(run.llm_calls_used), sub: run.max_llm_calls != null ? `budget ${run.max_llm_calls}` : null },
+                { label: "Elapsed", val: elapsed, sub: null },
+                {
+                  label: "Health",
+                  val: run.error ? "error" : isActive ? (connected ? "streaming" : "reconnecting") : "idle",
+                  sub: run.error ? "see Log tab" : !isActive && run.status === "completed" ? "run finished" : null,
+                },
               ].map(({ label, val, sub }, i) => (
                 <div key={label} className="stat px-4 py-3"
                      style={{ borderRight: i < 4 ? "1px solid var(--line-1)" : undefined, borderTop: "1px solid var(--line-1)" }}>
                   <dt className="eyebrow">{label}</dt>
                   <dd className="m-0 flex items-center gap-2" style={{ height: 24, fontWeight: 500 }}>
                     {label === "Health" && (
-                      <span className={`dot ${run.error ? "dot-err" : connected ? "dot-run" : "dot-idle"}`} />
+                      <span className={`dot ${run.error ? "dot-err" : isActive && connected ? "dot-run" : "dot-idle"}`} />
                     )}
                     <span className="num mono" style={{ fontSize: 20 }}>{val}</span>
                   </dd>

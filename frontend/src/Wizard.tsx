@@ -159,7 +159,7 @@ export default function Wizard({ onDone, onCancel, onError }: {
       1: source ? `${source.pages} pp · ${source.chunks} chunks` : "Required — upload or choose a document",
       2: brief ? `${brief.issues.length} issues · ${brief.stakeholder_groups.length} groups` : "Required — name and research brief",
       3: `${agents} agents · ${ticks} ticks · ${writesPerTick}/tick`,
-      4: `${ticks} ticks · ≤ ${est?.estimate?.max_llm_calls ?? "—"} LLM calls`,
+      4: est ? `${ticks} ticks · ≤ ${est.estimate.max_llm_calls} LLM calls` : `${ticks} ticks`,
     };
     return s;
   }, [source, brief, agents, ticks, writesPerTick, est]);

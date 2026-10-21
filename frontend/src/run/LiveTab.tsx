@@ -360,7 +360,7 @@ function LiveRail({ run, posts, runId, connected, onError, bumpKey }: {
         <div className="flex items-center justify-between px-5 pb-2.5 pt-3.5">
           <h2 className="t-h3">Agents this tick</h2>
           <span className="t-meta mono">
-            {tickPosts.length} posted{scheduled > 0 ? ` · ${scheduled} scheduled` : ""}
+            {tickPosts.length} posted{["running", "seeding", "paused"].includes(run.status) && scheduled > 0 ? ` · ${scheduled} scheduled` : ""}
           </span>
         </div>
         {tickPosts.length === 0 ? (

@@ -78,7 +78,7 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError 
           </button>
         ))}
         <span className="input-wrap ml-auto max-w-64 flex-1">
-          <Search className="ic-sm" aria-hidden />
+          <Search className="ic" aria-hidden />
           <input
             className="input"
             placeholder="Search name, @handle or group"

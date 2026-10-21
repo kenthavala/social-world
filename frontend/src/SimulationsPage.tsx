@@ -92,7 +92,7 @@ export default function SimulationsPage({ onOpen, onNew, onError }: {
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="input-wrap min-w-52 flex-1" style={{ maxWidth: 360 }}>
-          <Search className="ic-sm" aria-hidden />
+          <Search className="ic" aria-hidden />
           <input
             className="input"
             placeholder="Search by name, document or run ID"

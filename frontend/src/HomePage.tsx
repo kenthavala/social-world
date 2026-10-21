@@ -84,13 +84,13 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
       ticks: `${r.ticks_done}/${r.ticks_total || "—"}`,
     })), [runs]);
 
-  const ruler = active
-    ? buildRuler(active.posts, active.run.config?.ticks ?? 0,
-        Math.min(Math.max(active.run.current_tick || active.run.last_completed_tick || 1, 1), Math.max(1, active.run.config?.ticks ?? 1)))
-    : [];
+  const totalTicks = active?.run.config?.ticks ?? 1;
   const currentTick = active
-    ? Math.min(Math.max(active.run.current_tick || active.run.last_completed_tick || 1, 1), Math.max(1, active.run.config?.ticks ?? 1))
+    ? Math.min(Math.max(active.run.current_tick || active.run.last_completed_tick || 1, 1), Math.max(1, totalTicks))
     : 0;
+  const ruler = active
+    ? buildRuler(active.posts, totalTicks, ["running", "seeding", "paused"].includes(active.run.status) ? currentTick : 0)
+    : [];
 
   const today = new Date().toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
@@ -186,7 +186,7 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
                   </div>
                 </div>
               </div>
-              <dl className="m-0 grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4" style={{ minWidth: 280 }}>
+              <dl className="m-0 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4" style={{ flex: "1 1 280px" }}>
                 <div className="stat"><dt className="eyebrow">Posts</dt><dd className="stat-v m-0">{active.run.posts}</dd></div>
                 <div className="stat"><dt className="eyebrow">Agents</dt><dd className="stat-v m-0">{active.run.agents}</dd></div>
                 <div className="stat"><dt className="eyebrow">LLM calls</dt><dd className="stat-v m-0">{active.run.llm_calls_used}</dd></div>
@@ -325,8 +325,10 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
                       <span className="flex min-w-0 flex-1 flex-col gap-1">
                         <span className="ellipsis" style={{ fontWeight: 500 }}>{d.filename}</span>
                         <span className="t-meta flex items-center gap-2">
-                          <span className={`badge ${d.status === "ready" ? "s-ok" : ""}`} style={{ fontSize: 10 }}>{d.status}</span>
-                          <span className="mono">{d.pages} pp · {d.chunks} chunks</span>
+                          <span className={`badge ${["ready", "extracted"].includes(d.status) ? "s-ok" : ""}`} style={{ fontSize: 10 }}>{d.status}</span>
+                          <span className="mono">
+                            {d.pages} pp{d.chunks != null ? ` · ${d.chunks} chunks` : ""}
+                          </span>
                         </span>
                       </span>
                     </a>

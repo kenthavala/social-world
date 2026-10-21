@@ -204,7 +204,7 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
           ) : (
             <div className="grid" style={{ gridTemplateColumns: "28px minmax(0,1fr)", gap: 8 }}>
               <div className="mono flex flex-col justify-between" style={{ height: 168, fontSize: 10, color: "var(--fg-3)", textAlign: "right" }} aria-hidden>
-                <span>{maxTickCount}</span><span>{Math.round(maxTickCount * 0.66)}</span><span>{Math.round(maxTickCount * 0.33)}</span><span>0</span>
+                <span>{maxTickCount}</span><span>0</span>
               </div>
               <div style={{ position: "relative", height: 168 }}>
                 <div className="absolute inset-0 flex flex-col justify-between" aria-hidden>
@@ -228,7 +228,11 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
               </div>
               <span />
               <div className="ruler-axis" style={{ gap: 6 }}>
-                {stats.postsByTick.map((t) => <span key={t.tick} style={{ textAlign: "center" }}>{String(t.tick).padStart(2, "0")}</span>)}
+                {stats.postsByTick.map((t, i) => {
+                  const n = stats.postsByTick.length;
+                  const show = t.tick === 1 || i === n - 1 || t.tick % (n > 32 ? 8 : 4) === 0;
+                  return <span key={t.tick} style={{ textAlign: "center" }}>{show ? String(t.tick).padStart(2, "0") : ""}</span>;
+                })}
               </div>
             </div>
           )}
@@ -270,7 +274,7 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
             <span className="t-meta">likes + reposts + follows recorded</span>
           </div>
           <div className="panel-body">
-            {engSeries.length > 1 ? (
+            {engSeries.length > 1 && engSeries.some((e) => e.engagement > 0) ? (
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={engSeries}>
                   <CartesianGrid stroke="var(--line-1)" strokeDasharray="3 3" />

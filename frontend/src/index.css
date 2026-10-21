@@ -23,8 +23,10 @@ body { background: var(--bg-0); color: var(--fg-1); }
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
-.mo a { color: inherit; text-decoration: none; }
-.mo button { font: inherit; color: inherit; }
+.mo a:not([class]) { color: inherit; text-decoration: none; }
+.mo button:not([class]) { font: inherit; color: inherit; }
+.mo a { text-decoration: none; }
+.mo button { font: inherit; }
 .mo p, .mo h1, .mo h2, .mo h3, .mo h4 { margin: 0; }
 .mo ::selection { background: var(--accent-soft); }
 .mo :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
