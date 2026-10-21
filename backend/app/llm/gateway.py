@@ -230,6 +230,7 @@ class Gateway:
         provider_name = provider_override
         model = model_override
         last_error: Optional[str] = None
+        last_status: Optional[int] = None
         for attempt in range(1, 5):  # 1 initial call + up to 3 retries
             try:
                 # essay/persona get their long-form budget inside _send; double_tokens
@@ -241,6 +242,7 @@ class Gateway:
             except AppError as e:
                 provider_name, model = e.provider or provider_name, e.model or model
                 last_error = e.message
+                last_status = e.http_status
                 _record(run_id, task, provider_name, model, rhash, _canonical(messages)[:8000],
                         "", 0, "error", e.http_status, e.message, None, None, 0)
                 if e.http_status not in RETRYABLE_STATUS:
@@ -333,8 +335,9 @@ class Gateway:
         raise AppError(
             last_error or "provider call failed after retries",
             component="llm", stage="generate", provider=provider_name, model=model,
+            http_status=last_status,
             error_type="provider_failed",
-            hint=_hint_for(provider_name or "provider", None, last_error or ""))
+            hint=_hint_for(provider_name or "provider", last_status, last_error or ""))
 
     def _parse_note(self, text: str) -> str:
         from app.llm import parsing as P

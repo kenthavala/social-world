@@ -106,6 +106,10 @@ export default function SettingsPage({ onSaved, onError }: {
 
   const currentProvider = providers?.find((p) => p.name === field("llm_provider"));
   const keySet = currentProvider?.key_env ? settings?.keys?.[currentProvider.key_env] : undefined;
+  const keySetAt = currentProvider?.key_env
+    ? settings?.settings?.key_set_at?.[currentProvider.key_env]
+    : undefined;
+  const requiresKey = currentProvider?.requires_key !== false;
 
   if (busy && settings === null) return <div className="pt-8"><Spinner label="Loading settings…" /></div>;
 
@@ -137,7 +141,10 @@ export default function SettingsPage({ onSaved, onError }: {
                 {currentProvider.name === "mock" ? <span className="dot" /> : keySet ? (
                   <svg className="ic-xs" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 8.5 6.5 12 13 4.5" /></svg>
                 ) : <span className="dot" />}
-                {currentProvider.name === "mock" ? "Offline mock" : keySet ? "Key set" : "No key"}
+                {currentProvider.name === "mock"
+                  ? "Offline mock"
+                  : !requiresKey ? "No key required"
+                  : keySet ? "Key set" : "No key"}
               </span>
             )}
           </div>
@@ -148,11 +155,14 @@ export default function SettingsPage({ onSaved, onError }: {
                       onChange={(e) => setField("llm_provider", e.target.value)}>
                 {providers?.map((p) => (
                   <option key={p.name} value={p.name}>
-                    {p.name}{p.key_env ? (p.has_key ? "  (key set)" : "  (no key)") : ""}
+                    {p.name}{p.requires_key === false ? "  (no key needed)" : p.key_env ? (p.has_key ? "  (key set)" : "  (no key)") : ""}
                   </option>
                 ))}
               </select>
               {currentProvider?.notes && <span className="hint">{currentProvider.notes}</span>}
+              {currentProvider && currentProvider.key_env && keySet && keySetAt && (
+                <span className="hint">Key saved · set {keySetAt.slice(0, 19).replace("T", " ")} UTC</span>
+              )}
               {currentProvider && currentProvider.key_env && !currentProvider.has_key && (
                 <span className="hint" style={{ color: "var(--warn-fg)" }}>
                   No API key set. Add it in the Keys section below, or set {currentProvider.key_env} in .env.
@@ -291,7 +301,7 @@ export default function SettingsPage({ onSaved, onError }: {
                 <span className="label">Response cache</span>
                 <select className="input" value={field("llm_cache") === "false" ? "false" : "true"}
                         onChange={(e) => setField("llm_cache", e.target.value)}>
-                  <option value="true">on — repeat requests reuse recorded responses</option>
+                  <option value="true">on — reuse identical recorded responses</option>
                   <option value="false">off — always call the provider</option>
                 </select>
               </label>
@@ -322,7 +332,10 @@ export default function SettingsPage({ onSaved, onError }: {
             <div className="grid gap-2.5">
               {(settings ? Object.keys(settings.keys) : []).map((envVar) => (
                 <div key={envVar} className="flex items-center gap-2">
-                  <span className={`badge ${settings?.keys?.[envVar] ? "s-ok" : ""}`} style={{ width: 68, justifyContent: "center" }}>
+                  <span className={`badge ${settings?.keys?.[envVar] ? "s-ok" : ""}`} style={{ width: 68, justifyContent: "center" }}
+                        title={settings?.settings?.key_set_at?.[envVar]
+                          ? `set ${String(settings.settings.key_set_at[envVar]).slice(0, 19).replace("T", " ")} UTC`
+                          : undefined}>
                     {settings?.keys?.[envVar] ? "set" : "not set"}
                   </span>
                   <input

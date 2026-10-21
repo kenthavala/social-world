@@ -50,7 +50,7 @@ export function usePosts(runId: string | null, trigger: unknown) {
   const reload = useCallback(async () => {
     if (!runId) return;
     try {
-      const { posts: p } = await api.listPosts(runId, { limit: 500 });
+      const { posts: p } = await api.listPosts(runId, { limit: 2000, newest: true });
       setPosts(p);
     } catch {
       /* poll errors surface in run status instead */

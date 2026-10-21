@@ -38,6 +38,8 @@ def _public_settings() -> dict:
     for name, preset in PRESETS.items():
         if preset.key_env:
             out["keys"][preset.key_env] = bool(get_api_key(name))
+    # non-secret timestamps for keys written through Settings
+    out["key_set_at"] = config.get("_key_set_at", {}) or {}
     return out
 
 
@@ -109,3 +111,21 @@ def _write_keys_to_env(keys: dict[str, str]) -> None:
         ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError as e:
         raise AppError(f"could not write .env: {e}", component="api", stage="settings")
+    # record when each key was set (metadata only; never the key itself)
+    import json as _json
+    from datetime import datetime, timezone
+    from app.config import SETTINGS_FILE
+    try:
+        meta = {}
+        if SETTINGS_FILE.exists():
+            meta = _json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        stamps = dict(meta.get("_key_set_at") or {})
+        now = datetime.now(timezone.utc).isoformat()
+        for var, value in keys.items():
+            if var in _KEY_VARS and value:
+                stamps[var] = now
+        meta["_key_set_at"] = stamps
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(_json.dumps(meta, indent=2), encoding="utf-8")
+    except OSError:
+        pass  # the key write succeeded; metadata is best-effort

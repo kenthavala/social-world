@@ -10,11 +10,12 @@ from app import db
 
 def graph_for_run(run_id: str, tick: int | None = None) -> nx.DiGraph:
     g = nx.DiGraph()
-    agents = db.query("SELECT id, handle, name, archetype, stances_json, traits_json"
-                      " FROM agents WHERE run_id=?", (run_id,))
+    agents = db.query("SELECT id, handle, name, archetype, stakeholder_group, stances_json,"
+                      " traits_json FROM agents WHERE run_id=?", (run_id,))
     for a in agents:
         g.add_node(a["id"], handle=a["handle"], name=a["name"], archetype=a["archetype"],
-                   stances=db.uj(a["stances_json"], {}), traits=db.uj(a["traits_json"], {}))
+                   group=a["stakeholder_group"], stances=db.uj(a["stances_json"], {}),
+                   traits=db.uj(a["traits_json"], {}))
     if tick is None:
         rows = db.query("SELECT src, dst, follows, weight FROM edges WHERE run_id=?", (run_id,))
     else:

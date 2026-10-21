@@ -164,7 +164,8 @@ def list_sources() -> dict:
     rows = db.query(
         "SELECT s.id, s.filename, s.status, s.pages, s.created_at, s.brief_json,"
         " (SELECT COUNT(*) FROM chunks c WHERE c.source_id=s.id) AS chunks,"
-        " (SELECT COALESCE(SUM(c.n_words),0) FROM chunks c WHERE c.source_id=s.id) AS words"
+        " (SELECT COALESCE(SUM(c.n_words),0) FROM chunks c WHERE c.source_id=s.id) AS words,"
+        " (SELECT COUNT(*) FROM runs r WHERE r.source_id=s.id) AS used_by"
         " FROM sources s ORDER BY s.created_at DESC LIMIT 200")
     return {"sources": [{k: v for k, v in dict(r).items() if k != "brief_json"}
                         | {"has_brief": bool(r["brief_json"])} for r in rows]}

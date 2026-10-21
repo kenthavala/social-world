@@ -3,20 +3,18 @@ import type { Post } from "../types";
 import * as api from "../api";
 
 export const RUN_TABS = [
-  { key: "live", label: "Live" },
+  { key: "live", label: "Feed" },
   { key: "agents", label: "Agents" },
-  { key: "network", label: "Network" },
-  { key: "events", label: "Events" },
-  { key: "analysis", label: "Analysis" },
-  { key: "log", label: "Log" },
+  { key: "network", label: "Connections" },
+  { key: "analysis", label: "Findings" },
 ] as const;
 
 export type RunTabKey = (typeof RUN_TABS)[number]["key"];
 
 // Migrate tab keys stored by earlier sessions (overview/feed → live, insights → analysis).
 export function normalizeTab(t: string | null): RunTabKey {
-  if (t === "overview" || t === "feed") return "live";
-  if (t === "insights") return "analysis";
+  if (t === "overview" || t === "feed" || t === "events") return "live";
+  if (t === "insights" || t === "log") return "analysis";
   return (RUN_TABS.some((x) => x.key === t) ? t : "live") as RunTabKey;
 }
 
@@ -62,7 +60,7 @@ export interface RulerCell {
 
 // Posts per tick by stance, derived from the run's real posts (never fabricated).
 // highlightTick = the in-progress tick (0 = none, e.g. a finished run).
-export function buildRuler(posts: Post[], totalTicks: number, highlightTick: number): RulerCell[] {
+export function buildRuler(posts: Post[], totalTicks: number, highlightTick: number, selectedTick: number | null = null): RulerCell[] {
   const counts = new Map<number, { pro: number; neu: number; con: number }>();
   for (const p of posts) {
     const c = counts.get(p.tick) ?? { pro: 0, neu: 0, con: 0 };
@@ -79,7 +77,8 @@ export function buildRuler(posts: Post[], totalTicks: number, highlightTick: num
     const total = c.pro + c.neu + c.con;
     const cur = i === highlightTick;
     const fut = highlightTick > 0 && i > highlightTick;
-    const cls = "tk" + (cur ? " is-current" : "") + (fut ? " is-future" : "");
+    const cls = "tk" + (cur ? " is-current" : "") + (fut ? " is-future" : "") +
+      (selectedTick === i ? " is-sel" : "");
     const label = String(i).padStart(2, "0");
     cells.push({
       n: i,
@@ -88,10 +87,10 @@ export function buildRuler(posts: Post[], totalTicks: number, highlightTick: num
       max: globalMax,
       cls,
       ax: i === 1 || i === nTicks || i % labelEvery === 0 ? label : "",
-      axCls: cur ? "cur" : "",
+      axCls: cur || selectedTick === i ? "cur" : "",
       tip: total > 0
-        ? `Tick ${label}${cur ? " (in progress)" : ""} · ${total} post${total === 1 ? "" : "s"} — PRO ${c.pro} · NEUTRAL ${c.neu} · CON ${c.con}`
-        : `Tick ${label} · not started`,
+        ? `Round ${label}${cur ? " (in progress)" : ""} · ${total} post${total === 1 ? "" : "s"} — Supports ${c.pro} · Undecided ${c.neu} · Opposes ${c.con}`
+        : `Round ${label} · not started`,
     });
   }
   return cells;

@@ -44,9 +44,9 @@ export function useTheme() {
   return { theme, toggle: () => setTheme((t) => (t === "dark" ? "light" : "dark")) };
 }
 
-const HomeIcon = () => (
-  <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M2.5 7 8 2.5 13.5 7v6.5h-4v-4h-3v4h-4z" />
+const PlusIcon = () => (
+  <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+    <path d="M8 3v10M3 8h10" />
   </svg>
 );
 const SimIcon = () => (
@@ -121,11 +121,11 @@ export function Shell({ route, children }: { route: Route; children: React.React
   }, [activeRun?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const navItems = [
-    { name: "home", label: "Home", icon: <HomeIcon />, href: "#/", count: null as number | null },
     { name: "simulations", label: "Simulations", icon: <SimIcon />, href: "#/simulations", count: state.sims.length || null },
-    { name: "documents", label: "Documents", icon: <DocIcon />, href: "#/documents", count: state.docs },
+    { name: "documents", label: "Sources", icon: <DocIcon />, href: "#/documents", count: state.docs },
     { name: "settings", label: "Settings", icon: <SettingsIcon />, href: "#/settings", count: null },
   ];
+  const isRun = route.name === "run";
 
   const currentProvider = state.providers.find((p) => p.name === state.provider) ?? null;
   const keyOk = state.provider === "mock" ? true : currentProvider ? currentProvider.has_key : null;
@@ -152,27 +152,41 @@ export function Shell({ route, children }: { route: Route; children: React.React
           </button>
         </header>
         <div className="flex-1 min-w-0">{children}</div>
-        <nav
-          className="sticky bottom-0 z-30 border-t grid"
-          style={{ gridTemplateColumns: "repeat(4, 1fr)", borderColor: "var(--line-1)", background: "var(--bg-0)" }}
-          aria-label="Primary"
-        >
-          {navItems.map((item) => {
-            const current = route.name === item.name;
-            return (
-              <a
-                key={item.name}
-                href={item.href}
-                className="flex flex-col items-center justify-center gap-1"
-                style={{ height: 56, fontSize: 10.5, fontWeight: 500, color: current ? "var(--fg-1)" : "var(--fg-3)" }}
-                aria-current={current ? "page" : undefined}
-              >
-                <span style={{ width: 20, height: 20, display: "grid", placeItems: "center" }}>{item.icon}</span>
-                {item.label}
-              </a>
-            );
-          })}
-        </nav>
+        {!isRun && (
+          <>
+            <nav
+              className="sticky bottom-0 z-30 border-t grid"
+              style={{ gridTemplateColumns: "repeat(3, 1fr)", borderColor: "var(--line-1)", background: "var(--bg-0)" }}
+              aria-label="Primary"
+            >
+              {navItems.map((item) => {
+                const current = route.name === item.name;
+                return (
+                  <a
+                    key={item.name}
+                    href={item.href}
+                    className="flex flex-col items-center justify-center gap-1"
+                    style={{ height: 60, fontSize: 10.5, fontWeight: 500, color: current ? "var(--fg-1)" : "var(--fg-3)" }}
+                    aria-current={current ? "page" : undefined}
+                  >
+                    <span style={{ width: 20, height: 20, display: "grid", placeItems: "center" }}>{item.icon}</span>
+                    {item.label}
+                  </a>
+                );
+              })}
+            </nav>
+            <a
+              href="#/new"
+              aria-label="New simulation"
+              className="btn btn-primary"
+              style={{ position: "fixed", left: "50%", bottom: 78, transform: "translateX(-50%)",
+                       width: 52, height: 52, borderRadius: "50%", zIndex: 32,
+                       boxShadow: "var(--shadow-pop)" }}
+            >
+              <PlusIcon />
+            </a>
+          </>
+        )}
       </div>
     );
   }
@@ -181,14 +195,17 @@ export function Shell({ route, children }: { route: Route; children: React.React
     <div className="mo min-h-screen flex">
       <aside className="side sticky top-0 h-screen" style={{ flex: "0 0 224px" }}>
         <Wordmark />
+        <a className="btn btn-primary btn-block side-new" href="#/new" title="New simulation" style={{ marginBottom: 14 }}>
+          <PlusIcon /> <span className="btn-label">New simulation</span>
+        </a>
         <nav aria-label="Primary">
           {navItems.map((item) => {
             const current = route.name === item.name;
             return (
               <a key={item.name} href={item.href} className={`nav ${current ? "is-current" : ""}`}
-                 aria-current={current ? "page" : undefined}>
+                 title={item.label} aria-current={current ? "page" : undefined}>
                 {item.icon}
-                {item.label}
+                <span className="nav-label">{item.label}</span>
                 {item.count != null && <span className="nav-count">{item.count}</span>}
               </a>
             );
@@ -224,7 +241,7 @@ export function Shell({ route, children }: { route: Route; children: React.React
           </a>
           <button className="btn btn-ghost btn-sm" onClick={toggle} style={{ justifyContent: "flex-start", paddingLeft: 10 }} aria-label="Toggle colour theme">
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
-            {theme === "light" ? "Dark mode" : "Light mode"}
+            <span className="btn-label">{theme === "light" ? "Dark mode" : "Light mode"}</span>
           </button>
         </div>
       </aside>
@@ -237,9 +254,9 @@ export function Shell({ route, children }: { route: Route; children: React.React
 }
 
 export function useIsMobile(): boolean {
-  const [m, setM] = useState(() => window.matchMedia("(max-width: 767px)").matches);
+  const [m, setM] = useState(() => window.matchMedia("(max-width: 820px)").matches);
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
+    const mq = window.matchMedia("(max-width: 820px)");
     const on = () => setM(mq.matches);
     mq.addEventListener("change", on);
     return () => mq.removeEventListener("change", on);

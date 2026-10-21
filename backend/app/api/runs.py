@@ -143,6 +143,8 @@ def list_runs() -> dict:
             "ticks_total": (cfg.get("ticks") or 0),
             "created_at": r["created_at"],
             "llm_calls_used": r["llm_calls_used"] or 0,
+            "parent_run_id": r["parent_run_id"],
+            "branch_round": r["branch_round"],
         })
     return {"runs": out}
 
@@ -171,6 +173,11 @@ def run_detail(run_id: str) -> dict:
         "parent_run_id": r["parent_run_id"],
         "branch_round": r["branch_round"],
         "llm_reserved": r["llm_reserved"] or 0,
+        "children": [{"id": c["id"], "name": c["name"], "status": c["status"],
+                      "created_at": c["created_at"]}
+                     for c in db.query(
+                         "SELECT id, name, status, created_at FROM runs"
+                         " WHERE parent_run_id=? ORDER BY created_at", (run_id,))],
     }
 
 
@@ -345,7 +352,8 @@ def agent_detail(run_id: str, agent_id: str) -> dict:
 @router.get("/runs/{run_id}/posts")
 def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = None,
                tick_from: Optional[int] = None, tick_to: Optional[int] = None,
-               q: Optional[str] = None, limit: int = 200, offset: int = 0) -> dict:
+               q: Optional[str] = None, limit: int = 200, offset: int = 0,
+               newest: bool = False) -> dict:
     sql = ("SELECT p.*, a.handle, a.name FROM posts p LEFT JOIN agents a ON a.id = p.agent_id"
            " AND a.run_id = p.run_id WHERE p.run_id=?")
     params: list[Any] = [run_id]
@@ -364,9 +372,14 @@ def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = N
     if q:
         sql += " AND p.text LIKE ?"
         params.append(f"%{q}%")
-    sql += " ORDER BY p.seq, p.tick LIMIT ? OFFSET ?"
-    params += [max(1, min(1000, limit)), max(0, offset)]
+    total = db.scalar(
+        sql.replace("SELECT p.*, a.handle, a.name FROM", "SELECT COUNT(*) FROM", 1), params) or 0
+    order = " DESC" if newest else ""
+    sql += f" ORDER BY p.seq{order}, p.tick{order} LIMIT ? OFFSET ?"
+    params += [max(1, min(2000, limit)), max(0, offset)]
     rows = db.query(sql, params)
+    if newest:
+        rows = list(reversed(rows))
     posts = []
     for p in rows:
         posts.append({"id": p["id"], "tick": p["tick"], "agent_id": p["agent_id"],
@@ -378,7 +391,16 @@ def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = N
                       "is_fallback": p["is_fallback"], "seq": p["seq"],
                       "model": p["model"], "provider": p["provider"],
                       "via_fallback": p["via_fallback"]})
-    return {"posts": posts, "count": len(posts)}
+    return {"posts": posts, "count": len(posts), "total": total}
+
+
+@router.get("/runs/{run_id}/findings")
+def get_findings(run_id: str) -> dict:
+    from app.analytics.findings import build_findings
+    try:
+        return build_findings(run_id)
+    except ValueError:
+        raise AppError("run not found", component="api", stage="findings", status_code=404)
 
 
 @router.get("/runs/{run_id}/stats")
@@ -491,14 +513,20 @@ def compare_runs(run_id: str, other: str) -> dict:
             "llm_calls": db.scalar("SELECT COUNT(*) FROM llm_calls WHERE run_id=?", (rid,)) or 0,
         }
     left, right = out["left"], out["right"]
+    linked = (right["run"].get("parent_run_id") == left["run"]["id"]
+              or left["run"].get("parent_run_id") == right["run"]["id"])
     out["diffs"] = {
         "posts": right["posts"] - left["posts"],
         "fallback_posts": right["fallback_posts"] - left["fallback_posts"],
         "citation_total": sum(c["citations"] for c in right["citations"]) -
                           sum(c["citations"] for c in left["citations"]),
-        "rounds": max(0, len(right["rounds"]) - len(left["rounds"])),
+        "rounds": len(right["rounds"]) - len(left["rounds"]),
     }
-    return out | {"label": "Re-run with intervention vs original (counted differences)"}
+    out["linked"] = linked
+    out["label"] = ("Re-run with intervention vs original (counted differences)"
+                    if linked else
+                    "Counted comparison of two runs not linked as a branch")
+    return out
 
 
 @router.get("/runs/{run_id}/graph")
@@ -514,7 +542,8 @@ def get_graph(run_id: str, tick: Optional[int] = None) -> dict:
             vals = [float(v.get("value", 0.0)) for v in stances.values() if isinstance(v, dict)]
             mean = sum(vals) / max(1, len(vals))
         nodes.append({"id": n_id, "handle": data.get("handle"), "name": data.get("name"),
-                      "archetype": data.get("archetype"), "mean_stance": round(mean, 3)})
+                      "archetype": data.get("archetype"), "group": data.get("group"),
+                      "mean_stance": round(mean, 3)})
     edges = [{"src": s, "dst": t, "weight": float(g.edges[s, t].get("weight", 0)),
               "follows": bool(g.edges[s, t].get("follows"))} for s, t in g.edges]
     return summary | {"nodes": nodes, "edges": edges}

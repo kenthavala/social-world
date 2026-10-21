@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import db
-from app.api import providers, runs, settings, sources, export
+from app.api import examples, providers, runs, settings, sources, export
 from app.errors import AppError, redact
 from app.logsafe import install as install_redaction
 from app.sim import engine
@@ -29,6 +29,7 @@ app.include_router(runs.router)
 app.include_router(providers.router)
 app.include_router(settings.router)
 app.include_router(export.router)
+app.include_router(examples.router)
 
 
 @app.exception_handler(AppError)

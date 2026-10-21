@@ -13,6 +13,9 @@ import type {
   TestReport,
   WorldBrief,
   Agent,
+  CompareResponse,
+  FindingsResponse,
+  SampleInfo,
 } from "./types";
 
 export class ApiError extends Error {
@@ -139,6 +142,10 @@ export const resumeRun = (id: string) => call<RunDetail>(`/api/runs/${id}/resume
 
 export const stopRun = (id: string) => call<RunDetail>(`/api/runs/${id}/stop`, { method: "POST" });
 
+export const branchRun = (id: string, text: string, audience = "all") =>
+  call<RunDetail & { mode: string; parent_run_id: string; label: string }>(
+    `/api/runs/${id}/branch`, json("POST", { text, audience, tick: 1 }));
+
 export const injectEvent = (
   id: string,
   text: string,
@@ -151,13 +158,16 @@ export const injectEvent = (
     audience: opts.audience ?? null,
   }));
 
-export const listPosts = (id: string, opts: { agent?: string; kind?: string; q?: string; limit?: number } = {}) => {
+export const listPosts = (id: string, opts: {
+  agent?: string; kind?: string; q?: string; limit?: number; newest?: boolean;
+} = {}) => {
   const p = new URLSearchParams();
   if (opts.agent) p.set("agent", opts.agent);
   if (opts.kind) p.set("kind", opts.kind);
   if (opts.q) p.set("q", opts.q);
+  if (opts.newest) p.set("newest", "1");
   p.set("limit", String(opts.limit ?? 500));
-  return call<{ posts: Post[]; count: number }>(`/api/runs/${id}/posts?${p}`);
+  return call<{ posts: Post[]; count: number; total: number }>(`/api/runs/${id}/posts?${p}`);
 };
 
 export const listAgents = (id: string) => call<{ agents: Agent[] }>(`/api/runs/${id}/agents`);
@@ -173,6 +183,26 @@ export const getGraph = (id: string, suffix = "") =>
   call<GraphResponse>(`/api/runs/${id}/graph${suffix}`);
 
 export const getMetrics = (id: string) => call<MetricsResponse>(`/api/runs/${id}/metrics`);
+
+export const getFindings = (id: string) => call<FindingsResponse>(`/api/runs/${id}/findings`);
+
+export const raiseBudget = (id: string, maxLlmCalls: number) =>
+  call<RunDetail>(`/api/runs/${id}/budget`, json("POST", { max_llm_calls: maxLlmCalls }));
+
+export const getRunStats = (id: string) =>
+  call<{
+    run_id: string; calls: number; by_status: Record<string, number>;
+    by_task: Record<string, number>; models: Record<string, number>;
+    avg_latency_ms: number | null; repaired: number; rejected: number;
+    fallback_posts: number; template_posts: number;
+  }>(`/api/runs/${id}/stats`);
+
+export const compareRuns = (a: string, b: string) =>
+  call<CompareResponse>(`/api/runs/${a}/compare?other=${encodeURIComponent(b)}`);
+
+export const getSample = () => call<SampleInfo>("/api/examples/sample");
+
+export const loadSample = () => call<SampleInfo>("/api/examples/sample", { method: "POST" });
 
 export type EssaySummary = {
   sections: Record<string, string>;

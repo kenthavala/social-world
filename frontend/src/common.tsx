@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import type { AppErrorShape } from "./types";
 import { ApiError } from "./api";
+import { LoadingMark, Mark } from "./Brand";
 
 export function ErrorBanner({ err, onDismiss }: { err: unknown; onDismiss?: () => void }) {
   if (!err) return null;
@@ -40,10 +42,83 @@ export function ErrorBanner({ err, onDismiss }: { err: unknown; onDismiss?: () =
   );
 }
 
+export function EmptyState({ title, body, action, sampleHref, className = "" }: {
+  title: string;
+  body: React.ReactNode;
+  action?: React.ReactNode;
+  sampleHref?: string;
+  className?: string;
+}) {
+  return (
+    <div className={`empty panel ${className}`}>
+      <div style={{ opacity: 0.45 }} aria-hidden><Mark size={40} /></div>
+      <p className="t-h3">{title}</p>
+      <p className="t-meta" style={{ maxWidth: 380 }}>{body}</p>
+      {action}
+      {sampleHref && (
+        <a className="btn btn-ghost btn-sm" href={sampleHref}>Open the sample world</a>
+      )}
+    </div>
+  );
+}
+
+export function MockStripe({ className = "" }: { className?: string }) {
+  return (
+    <div className={`mock-stripe ${className}`} role="note"
+         style={{ padding: "9px 14px", borderRadius: "var(--r-2)", fontSize: 12.5 }}>
+      <strong>Mock provider</strong> — agent posts are synthetic template text, not model
+      output. Exports carry a mock watermark.
+    </div>
+  );
+}
+
+export function GeneratedTag({ title }: { title?: string }) {
+  return <span className="generated-tag" title={title}>Generated</span>;
+}
+
+/** Trap focus in a drawer/dialog, close on Escape and restore the trigger's focus. */
+export function useFocusTrap(ref: React.RefObject<HTMLElement>,
+                              onClose?: () => void) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const selector = "a[href], button:not([disabled]), textarea:not([disabled])," +
+      " input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const focusables = () => Array.from(el.querySelectorAll<HTMLElement>(selector))
+      .filter((x) => x.offsetParent !== null);
+    (focusables()[0] ?? el).focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose?.();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const f = focusables();
+      if (f.length === 0) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
+  }, [ref, onClose]);
+}
+
 export function Spinner({ label }: { label?: string }) {
   return (
     <span className="inline-flex items-center gap-2 t-meta" style={{ color: "var(--fg-3)" }}>
-      <span className="spin" style={{ color: "var(--accent)" }} />
+      <span className="inline-flex" aria-hidden><LoadingMark size={16} /></span>
       {label}
     </span>
   );

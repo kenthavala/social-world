@@ -3,7 +3,7 @@
 // fired. Audience: everyone → public newsroom broadcast; a stakeholder group →
 // private briefing (only those agents will remember it).
 import { useEffect, useMemo, useState } from "react";
-import { Megaphone, Zap } from "lucide-react";
+import { GitBranch, Megaphone, Zap } from "lucide-react";
 import type { RunDetail } from "../types";
 import * as api from "../api";
 import { Spinner } from "../common";
@@ -14,11 +14,13 @@ const EV_BADGE: React.CSSProperties = {
   color: "var(--evt-fg)", background: "var(--evt-soft)", borderColor: "var(--evt-line)",
 };
 
-export default function EventsTab({ runId, run, bumpKey, onError }: {
+export default function EventsTab({ runId, run, bumpKey, onError, embedded = false, onBranched }: {
   runId: string;
   run: RunDetail;
   bumpKey: number;
   onError: (e: unknown) => void;
+  embedded?: boolean;
+  onBranched?: (runId: string) => void;
 }) {
   const [events, setEvents] = useState<RunEventMap | null>(null);
   const [groups, setGroups] = useState<string[]>([]);
@@ -27,6 +29,7 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
   const [audience, setAudience] = useState("all");
   const [busy, setBusy] = useState(false);
   const [posted, setPosted] = useState<string | null>(null);
+  const [branchNote, setBranchNote] = useState<string | null>(null);
 
   useEffect(() => {
     api.listRunEvents(runId).then((r) => setEvents(r.events)).catch((e) => {
@@ -62,6 +65,21 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
     }
   }
 
+  async function branch() {
+    if (!text.trim()) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const r = await api.branchRun(runId, text.trim(), audience === "all" ? "all" : audience);
+      setBranchNote("New run created from round 1 with this intervention. The original is untouched.");
+      onBranched?.(r.id);
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const authored = useMemo(() => (events ?? []).filter((e) => {
     if (e.kind === "event" || e.kind === "scene_event" || e.kind === "injected" || e.kind === "scheduled") {
       return true;
@@ -79,17 +97,17 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
   const canControl = ["draft", "ready", "running", "seeding", "paused", "interrupted"].includes(run.status);
 
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-2">
+    <div className={`grid items-start gap-4 ${embedded ? "" : "lg:grid-cols-2"}`}>
       <div className="panel">
         <div className="panel-head">
           <h2 className="t-h3 flex items-center gap-2">
-            <Zap size={14} style={{ color: "var(--evt-fg)" }} /> Add an event
+            <Zap size={14} style={{ color: "var(--evt-fg)" }} /> Add an intervention
           </h2>
           <span className="t-meta">intervention</span>
         </div>
         <div className="panel-body flex flex-col gap-3">
           <p className="t-body fg-2" style={{ fontSize: 13 }}>
-            Events enter the simulated world at the tick you choose. Everyone gets a public
+            Interventions enter the simulated world at the round you choose. Everyone gets a public
             newsroom broadcast, or you can deliver a private briefing to one stakeholder group —
             only those agents will remember it. Schedules are stored on the server, so they
             survive a restart.
@@ -99,16 +117,15 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
             placeholder="e.g. Overnight polls show public support dropping six points."
             value={text}
             maxLength={500}
-            disabled={!canControl}
             onChange={(e) => setText(e.target.value)}
           />
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="field">
-              <span className="label">Deliver at tick <span className="opt">(default: next tick)</span></span>
+              <span className="label">Deliver at round <span className="opt">(default: next round)</span></span>
               <input
                 className="input"
                 inputMode="numeric"
-                placeholder={`next tick (T${String(nextTick).padStart(2, "0")})`}
+                placeholder={`next round (R${String(nextTick).padStart(2, "0")})`}
                 value={deliverAt}
                 onChange={(e) => setDeliverAt(e.target.value.replace(/[^0-9]/g, ""))}
               />
@@ -123,23 +140,32 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
               </select>
             </label>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button className="btn btn-primary" onClick={inject}
                     disabled={!canControl || !text.trim() || busy || events === null}>
-              <Megaphone size={14} /> {audience === "all" ? "Inject event" : "Brief group"}
+              <Megaphone size={14} /> {audience === "all" ? "Record intervention" : "Brief group"}
+            </button>
+            <button className="btn" onClick={branch} disabled={!text.trim() || busy}
+                    title="Creates a new run from round 1 with the same setup and seed; the original is untouched">
+              <GitBranch size={14} /> Re-run with this intervention
             </button>
             {busy && <Spinner label="Recording…" />}
           </div>
+          <p className="t-meta">
+            A controlled comparison uses <strong>Re-run with this intervention</strong>: the engine
+            does not fork state, so the new run starts from round 1 and is labelled as a re-run.
+          </p>
           {!canControl && (
             <p className="t-meta">
               {["completed", "failed"].includes(run.status)
-                ? `This run is ${run.status} — no further ticks will run, so new events cannot be delivered. Start a new simulation to run interventions.`
-                : `This run is ${run.status} — events cannot be delivered in this state.`}
+                ? `This run is ${run.status} — no further rounds will run, so a recorded intervention cannot be delivered here. Use “Re-run with this intervention” to compare a fresh run from round 1.`
+                : `This run is ${run.status} — interventions cannot be delivered in this state.`}
             </p>
           )}
           {canControl && ["draft", "ready"].includes(run.status) && (
-            <p className="t-meta">Scheduled events are stored now and delivered once the run starts.</p>
+            <p className="t-meta">Scheduled interventions are stored now and delivered once the run starts.</p>
           )}
+          {branchNote && <div className="banner banner-info" style={{ fontSize: 12.5 }}><span>{branchNote}</span></div>}
           {posted && (
             <div className="banner banner-info" style={{ fontSize: 12.5 }}>
               <span className={`sg sg-evt`} style={{ marginTop: 3 }} />
@@ -155,7 +181,7 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
 
       <div className="panel overflow-hidden">
         <div className="panel-head">
-          <span className="eyebrow">Event log — {authored.length} recorded</span>
+          <span className="eyebrow">Intervention log — {authored.length} recorded</span>
           <span className="t-meta">{scheduled.length} pending</span>
         </div>
         <div className="max-h-[70vh] overflow-y-auto">
@@ -164,9 +190,9 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
           ) : authored.length === 0 ? (
             <div className="empty" style={{ padding: "36px 24px" }}>
               <span className="empty-ic"><Zap size={20} style={{ color: "var(--evt-fg)" }} /></span>
-              <p className="t-h3">No events yet</p>
+              <p className="t-h3">No interventions yet</p>
               <p className="t-meta" style={{ maxWidth: 300 }}>
-                No interventions have been added to this simulation. Events let you nudge the
+                No interventions have been added to this simulation. An intervention can nudge the
                 world mid-run — a poll, a headline, a private briefing.
               </p>
             </div>
@@ -181,9 +207,9 @@ export default function EventsTab({ runId, run, bumpKey, onError }: {
               <div key={i} className="px-4 py-3" style={i < authored.length - 1 ? { borderBottom: "1px solid var(--line-1)" } : undefined}>
                 <div className="flex flex-wrap items-center gap-2">
                   {isScheduled ? (
-                    <span className="badge" style={EV_BADGE}>SCHEDULED → T{String(e.tick).padStart(2, "0")}</span>
+                    <span className="badge" style={EV_BADGE}>SCHEDULED → R{String(e.tick).padStart(2, "0")}</span>
                   ) : (
-                    <span className="badge" style={EV_BADGE}>DELIVERED · T{String(e.tick).padStart(2, "0")}</span>
+                    <span className="badge" style={EV_BADGE}>DELIVERED · R{String(e.tick).padStart(2, "0")}</span>
                   )}
                   {isPrivate ? (
                     <span className="badge">private · {p.audience}{p.audience_size ? ` · ${p.audience_size} agents` : ""}</span>

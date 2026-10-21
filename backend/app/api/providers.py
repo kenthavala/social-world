@@ -25,6 +25,7 @@ def list_providers() -> dict:
             "base_url": p.base_url if p.name != "custom" else "",
             "key_env": p.key_env,
             "has_key": bool(get_api_key(name)) if p.key_env else True,
+            "requires_key": p.requires_key,
             "default_rpm": p.default_rpm or config.default_rpm_fcc if p.name == "fcc" else p.default_rpm,
             "notes": p.notes,
             "supports_model_list": bool(listed),

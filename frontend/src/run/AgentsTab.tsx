@@ -1,14 +1,14 @@
 // Agents: roster with stance filter + search, and a detail drawer (stance history,
 // traits, memories, knowledge, posts with evidence chips). Activity comes from the
 // run's real posts; nothing here is invented.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { Agent, Post } from "../types";
 import * as api from "../api";
-import { Spinner } from "../common";
+import { Spinner, useFocusTrap } from "../common";
 import { fetchChunk, initials, postOverallStance } from "./helpers";
 
 const CLS = (v: number) => (v > 0.15 ? "pro" : v < -0.15 ? "con" : "neu");
@@ -19,12 +19,13 @@ function meanStance(a: Agent): number {
   return vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : 0;
 }
 
-export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError }: {
+export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError, roundFilter }: {
   runId: string;
   runSourceId: string | null;
   posts: Post[];
   bumpKey: number;
   onError: (e: unknown) => void;
+  roundFilter?: number | null;
 }) {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [sel, setSel] = useState<string | null>(null);
@@ -39,13 +40,14 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError 
   const activity = useMemo(() => {
     const m = new Map<string, { n: number; lastTick: number }>();
     for (const p of posts) {
+      if (roundFilter != null && p.tick > roundFilter) continue;
       const e = m.get(p.agent_id) ?? { n: 0, lastTick: 0 };
       e.n += 1;
       if (p.tick > e.lastTick) e.lastTick = p.tick;
       m.set(p.agent_id, e);
     }
     return m;
-  }, [posts]);
+  }, [posts, roundFilter]);
 
   const shown = useMemo(() => {
     if (!agents) return [];
@@ -138,7 +140,7 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError 
                   ))}
                 </span>
                 <span className="mono hidden w-24 text-right md:block" style={{ fontSize: 11.5, color: "var(--fg-3)" }}>
-                  {act ? <>{act.n} post{act.n === 1 ? "" : "s"} · T{String(act.lastTick).padStart(2, "0")}</> : "no posts"}
+                  {act ? <>{act.n} post{act.n === 1 ? "" : "s"} · R{String(act.lastTick).padStart(2, "0")}</> : "no posts"}
                 </span>
               </button>
             );
@@ -160,22 +162,19 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError 
   );
 }
 
-function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }: {
+function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey, roundFilter }: {
   runId: string;
   agentId: string;
   runSourceId: string | null;
   onClose: () => void;
   onError: (e: unknown) => void;
   bumpKey: number;
+  roundFilter?: number | null;
 }) {
   const [detail, setDetail] = useState<api.AgentDetail | null>(null);
   const [pages, setPages] = useState<Record<string, number | null>>({});
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  const ref = useRef<HTMLElement>(null);
+  useFocusTrap(ref, onClose);
 
   useEffect(() => {
     api.getAgentDetail(runId, agentId).then(setDetail).catch((e) => {
@@ -196,11 +195,14 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }:
   }, [detail, runSourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const a = detail?.agent;
+  const visiblePosts = detail
+    ? (roundFilter != null ? detail.posts.filter((p) => p.tick <= roundFilter) : detail.posts)
+    : [];
 
   return (
     <>
       <button className="scrim" onClick={onClose} aria-label="Close agent details" />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="ag-title">
+      <aside className="drawer" ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="ag-title">
         <div className="drawer-head">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="eyebrow">Agent</span>
@@ -241,7 +243,7 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }:
 
               {Object.keys(detail.stance_history).length > 0 && (
                 <Section title="Stance history per issue">
-                  <StanceHistoryCard series={detail.stance_history} />
+                  <StanceHistoryCard series={detail.stance_history} maxTick={roundFilter ?? undefined} />
                 </Section>
               )}
 
@@ -278,7 +280,7 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }:
                   <ul className="flex list-none flex-col gap-1.5 p-0 text-xs">
                     {detail.memories.slice(0, 12).map((m, i) => (
                       <li key={i} className="panel-2 p-2">
-                        <span className="mono" style={{ color: "var(--fg-4)" }}>T{m.tick}</span>{" "}
+                        <span className="mono" style={{ color: "var(--fg-4)" }}>R{m.tick}</span>{" "}
                         <span className="badge" style={{ fontSize: 10 }}>{m.kind}</span>{" "}
                         {m.text}
                       </li>
@@ -298,18 +300,18 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }:
                 </Section>
               )}
 
-              <Section title={`Posts — ${detail.posts.length}`}>
-                {detail.posts.length === 0 ? (
+              <Section title={`Posts — ${visiblePosts.length}${roundFilter != null ? ` up to round ${roundFilter}` : ""}`}>
+                {visiblePosts.length === 0 ? (
                   <p className="t-meta">Nothing posted yet.</p>
                 ) : (
                   <ul className="flex list-none flex-col gap-2 p-0">
-                    {detail.posts.map((p: Post) => (
+                    {visiblePosts.map((p: Post) => (
                       <li key={p.id} className="panel-2 p-2.5">
                         <div className="flex items-center gap-2 text-xs">
                           <span className={`stance stance-${postOverallStance(p)}`}>
                             <span className={`sg sg-${postOverallStance(p)}`} />{postOverallStance(p).toUpperCase()}
                           </span>
-                          <span className="mono" style={{ color: "var(--fg-4)" }}>T{String(p.tick).padStart(2, "0")}</span>
+                          <span className="mono" style={{ color: "var(--fg-4)" }}>R{String(p.tick).padStart(2, "0")}</span>
                           {Boolean(p.is_fallback) && <span className="badge s-warn">fallback</span>}
                           <span className="mono ml-auto" style={{ color: "var(--fg-4)", fontSize: 11 }}>
                             ♥ {p.likes} · ↻ {p.reposts} · ↩ {p.replies}
@@ -339,10 +341,14 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey }:
   );
 }
 
-function StanceHistoryCard({ series }: { series: Record<string, { tick: number; value: number }[]> }) {
+function StanceHistoryCard({ series, maxTick }: {
+  series: Record<string, { tick: number; value: number }[]>;
+  maxTick?: number;
+}) {
   const rows = new Map<number, Record<string, number>>();
   for (const [issue, pts] of Object.entries(series)) {
     for (const pt of pts) {
+      if (maxTick != null && pt.tick > maxTick) continue;
       const r = rows.get(pt.tick) ?? { tick: pt.tick };
       r[issue] = pt.value;
       rows.set(pt.tick, r);

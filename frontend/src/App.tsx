@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import { ErrorBanner } from "./common";
-import HomePage from "./HomePage";
 import Wizard from "./Wizard";
 import RunPage from "./RunPage";
 import SettingsPage from "./SettingsPage";
 import SimulationsPage from "./SimulationsPage";
 import DocumentsPage from "./DocumentsPage";
+import ComparePage from "./ComparePage";
 import { Shell, useHashRoute } from "./shell";
 import { navigate } from "./router";
 
@@ -28,7 +28,7 @@ export default function App() {
   }, [settingsVersion, route.name]);
 
   const openRun = useCallback((runId: string) => navigate({ name: "run", runId }), []);
-  const goHome = useCallback(() => navigate({ name: "home" }), []);
+  const goSims = useCallback(() => navigate({ name: "simulations" }), []);
 
   const isRun = route.name === "run";
 
@@ -57,16 +57,9 @@ export default function App() {
 
       <div className={isRun ? "pb-16" : "mx-auto w-full max-w-[1200px] px-4 pb-16 md:px-8"}>
         <ErrorBanner err={err} onDismiss={() => setErr(null)} />
-        {route.name === "home" && (
-          <HomePage
-            onNew={() => navigate({ name: "wizard" })}
-            onOpen={openRun}
-            onError={setErr}
-            settingsVersion={settingsVersion}
-          />
-        )}
         {route.name === "simulations" && (
-          <SimulationsPage onOpen={openRun} onNew={() => navigate({ name: "wizard" })} onError={setErr} />
+          <SimulationsPage onOpen={openRun} onNew={() => navigate({ name: "wizard" })}
+                            onError={setErr} settingsVersion={settingsVersion} />
         )}
         {route.name === "documents" && (
           <DocumentsPage onError={setErr} initialSource={route.sourceId} />
@@ -75,11 +68,15 @@ export default function App() {
           <SettingsPage onSaved={() => setSettingsVersion((v) => v + 1)} onError={setErr} />
         )}
         {route.name === "wizard" && (
-          <Wizard onDone={openRun} onCancel={goHome} onError={setErr}
+          <Wizard onDone={openRun} onCancel={goSims} onError={setErr}
                   initialSource={route.sourceId} />
         )}
         {route.name === "run" && (
-          <RunPage runId={route.runId} onBack={goHome} onError={setErr} />
+          <RunPage runId={route.runId} onBack={goSims} onError={setErr}
+                   sourceId={route.sourceId} postId={route.postId} />
+        )}
+        {route.name === "compare" && (
+          <ComparePage a={route.a} b={route.b} onBack={goSims} onOpen={openRun} onError={setErr} />
         )}
       </div>
     </Shell>

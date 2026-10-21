@@ -104,6 +104,11 @@ async def build_brief(source_id: str, scenario: str, gateway) -> dict:
         result = await gateway.complete("brief", messages)
         brief = _sanitize_brief(result.parsed if isinstance(result.parsed, dict) else result.text)
         if _looks_valid(brief):
+            brief["generated_by"] = {
+                "provider": getattr(result, "provider", "") or "",
+                "model": getattr(result, "model", "") or "",
+                "from_cache": bool(getattr(result, "from_cache", False)),
+            }
             return brief
     except Exception as e:  # noqa: BLE001 — never fail ingestion on brief problems
         fallback_error = str(e)[:200]
@@ -164,6 +169,13 @@ def _sanitize_brief(raw: Any) -> dict:
     for c in (raw.get("key_claims") or [])[:10]:
         if isinstance(c, dict) and c.get("text"):
             claims.append({"text": str(c["text"])[:300], "chunk_id": str(c.get("chunk_id") or "")[:64]})
+    meta = raw.get("generated_by")
+    if not isinstance(meta, dict):
+        meta = None
+    else:
+        meta = {"provider": str(meta.get("provider") or "")[:80],
+                "model": str(meta.get("model") or "")[:120],
+                "from_cache": bool(meta.get("from_cache"))}
     return {
         "summary": str(raw.get("summary") or "")[:1000],
         "issues": issues or [{"id": "iss_1", "name": "Main question", "question": "What should be done?",
@@ -174,6 +186,7 @@ def _sanitize_brief(raw: Any) -> dict:
         "key_claims": claims,
         "entities": [str(e)[:40] for e in (raw.get("entities") or [])[:10]],
         "fallback": False,
+        "generated_by": meta,
     }
 
 
@@ -194,4 +207,5 @@ def _fallback_brief(scenario: str, source_id: str) -> dict:
         "key_claims": [],
         "entities": [],
         "fallback": True,
+        "generated_by": None,
     }

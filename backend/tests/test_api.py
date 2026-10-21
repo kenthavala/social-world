@@ -97,6 +97,7 @@ def test_settings_no_key_leak(client, tmp_path, monkeypatch, fresh_db):
     assert "sk-nv-secret" not in r.text
     body = r.json()
     assert body["keys"]["NVIDIA_API_KEY"] is True
+    assert body["settings"]["key_set_at"]["NVIDIA_API_KEY"]
     assert "sk-nv-secret" not in client.get("/api/settings").text
 
 
@@ -128,6 +129,12 @@ def test_full_run_flow_mines_sse(client, uploaded_source):
     assert len(posts) > 0
     assert all(p["seq"] is not None for p in posts)
     assert [p["seq"] for p in posts] == sorted(p["seq"] for p in posts)
+    findings = client.get(f"/api/runs/{run_id}/findings")
+    assert findings.status_code == 200, findings.text
+    assert findings.json()["posts_total"] == len(posts)
+    pdf = client.get(f"/api/runs/{run_id}/export?format=pdf")
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.content.startswith(b"%PDF-")
     agents = client.get(f"/api/runs/{run_id}/agents").json()["agents"]
     assert len(agents) == 6
     metrics = client.get(f"/api/runs/{run_id}/metrics").json()

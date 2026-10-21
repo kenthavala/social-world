@@ -1,14 +1,14 @@
 // Analysis: what happened, what changed, what patterns appeared — all counted
 // from recorded rows. The ONE generated element (the LLM executive summary)
 // renders only inside its clearly-labeled draft card.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { Download, FileJson, FileText, FolderArchive, Sparkles } from "lucide-react";
-import type { Post, RunDetail } from "../types";
+import { Download, FileJson, FileText, FolderArchive, Sparkles, X } from "lucide-react";
+import type { Finding, FindingRow, FindingsResponse, Post, RunDetail } from "../types";
 import * as api from "../api";
-import { Spinner } from "../common";
+import { GeneratedTag, Spinner, useFocusTrap } from "../common";
 import { chunkInfo, deriveStats, initials, postOverallStance, subscribeChunks } from "./helpers";
 import type { EssaySummary } from "../api";
 
@@ -64,8 +64,9 @@ function MiniMd({ text }: { text: string }) {
 
 function ExportLinks({ runId }: { runId: string }) {
   const items: Array<{ fmt: string; label: string; icon: typeof Download }> = [
-    { fmt: "json", label: "JSON", icon: FileJson },
+    { fmt: "pdf", label: "PDF", icon: FileText },
     { fmt: "md", label: "Markdown", icon: FileText },
+    { fmt: "json", label: "JSON", icon: FileJson },
     { fmt: "csv", label: "CSV zip", icon: FolderArchive },
   ];
   return (
@@ -94,12 +95,15 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
   const [essay, setEssay] = useState<EssaySummary | null>(null);
   const [essayBusy, setEssayBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [findings, setFindings] = useState<FindingsResponse | null>(null);
+  const [finding, setFinding] = useState<{ title: string; ids: string[] } | null>(null);
   const [, force] = useState(0);
 
   useEffect(() => subscribeChunks(() => force((x) => x + 1)), []);
 
   useEffect(() => {
     api.getMetrics(runId).then(setMetrics as never).catch(() => setMetrics(null));
+    api.getFindings(runId).then(setFindings).catch(() => setFindings(null));
   }, [runId, bumpKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -178,20 +182,60 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
-          <h2 className="t-h1">Run summary</h2>
+          <h2 className="t-h1">Findings</h2>
           <p className="t-meta">
-            Counted from the {posts.length} post{posts.length === 1 ? "" : "s"} in this run so far.
-            Nothing on this page is model-generated — the one exception is the executive-summary
-            draft, clearly labeled where it appears.
+            Counted from the {posts.length} recorded post{posts.length === 1 ? "" : "s"} in this run.
+            Every count shows its denominator and opens the posts behind it. The only generated
+            text is the executive-summary draft, labelled where it appears.
           </p>
         </div>
         <span className="t-id">as of {asOf} UTC</span>
       </div>
 
+      {/* counted findings with denominators and links to their records */}
+      {findings && findings.findings.length > 0 && (
+        <section aria-label="Counted findings" className="grid gap-4 lg:grid-cols-2">
+          {findings.findings.map((f) => (
+            <div key={f.id} className="panel">
+              <div className="panel-head flex-wrap" style={{ minHeight: 46 }}>
+                <h3 className="t-h3">{f.title}</h3>
+                <span className="t-meta">
+                  denominator {f.denominator} {f.unit}
+                </span>
+              </div>
+              <div className="flex flex-col p-1.5">
+                {f.rows.length === 0 ? (
+                  <p className="t-meta px-3 py-2">No records for this finding yet.</p>
+                ) : f.rows.slice(0, 7).map((row, i) => {
+                  const ids = findingPostIds(f, row, posts);
+                  return (
+                    <button key={i} className="list-row" disabled={ids.length === 0}
+                            title={ids.length ? "Open the posts behind this count" : "No loaded posts for this row"}
+                            onClick={() => ids.length && setFinding({ title: f.title, ids })}
+                            style={{ padding: "8px 10px", gap: 10, borderRadius: "var(--r-1)",
+                                     opacity: ids.length ? 1 : 0.7 }}>
+                      <span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5 }}>
+                        {findingRowLabel(f, row)}
+                      </span>
+                      <span className="mono flex-none" style={{ fontSize: 11.5, color: "var(--fg-2)" }}>
+                        {findingRowCount(f, row)}
+                      </span>
+                    </button>
+                  );
+                })}
+                {f.rows.length > 7 && (
+                  <p className="t-meta px-3 py-1.5">+{f.rows.length - 7} more rows in the export.</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
       {/* posts per tick, by stance */}
       <section className="panel" aria-labelledby="ppt-h">
         <div className="panel-head">
-          <h3 id="ppt-h" className="t-h3">Posts per tick, by stance</h3>
+          <h3 id="ppt-h" className="t-h3">Posts per round, by stance</h3>
           <span className="t-meta flex gap-3">
             <span className="inline-flex items-center gap-1.5"><span className="sg sg-pro" />PRO {stats.stanceMix.pro}</span>
             <span className="inline-flex items-center gap-1.5"><span className="sg sg-neu" />NEUTRAL {stats.stanceMix.neu}</span>
@@ -272,7 +316,7 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
 
         <section className="panel" aria-labelledby="eng-h">
           <div className="panel-head">
-            <h3 id="eng-h" className="t-h3">Engagement per tick</h3>
+            <h3 id="eng-h" className="t-h3">Engagement per round</h3>
             <span className="t-meta">likes + reposts + follows recorded</span>
           </div>
           <div className="panel-body">
@@ -434,12 +478,13 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
         </section>
       )}
       {essay && !essayBusy && (
-        <section className="panel" aria-labelledby="essay-h">
-          <div className="panel-head">
+        <section className="panel generated" aria-labelledby="essay-h">
+          <div className="panel-head flex-wrap" style={{ minHeight: 46 }}>
             <h2 id="essay-h" className="t-h3 flex items-center gap-2">
-              <Sparkles size={14} style={{ color: "var(--evt-fg)" }} />
+              <Sparkles size={14} style={{ color: "var(--fg-2)" }} />
               Executive summary — LLM DRAFT (generated, not counted data)
             </h2>
+            <GeneratedTag title="Model-written prose about the counted snapshot" />
           </div>
           <div className="panel-body">
             <p className="t-id">
@@ -467,7 +512,118 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
           </div>
         </section>
       )}
+
+      {finding && (
+        <FindingPostsDrawer title={finding.title} ids={finding.ids} posts={posts}
+                            onClose={() => setFinding(null)} />
+      )}
     </div>
+  );
+}
+
+function findingPostIds(f: Finding, row: FindingRow, posts: Post[]): string[] {
+  if (row.post_ids && row.post_ids.length > 0) return row.post_ids;
+  if (row.agent_ids && row.agent_ids.length > 0) {
+    const set = new Set(row.agent_ids);
+    return posts.filter((p) => set.has(p.agent_id)).map((p) => p.id);
+  }
+  if (row.agent_id) return posts.filter((p) => p.agent_id === row.agent_id).map((p) => p.id);
+  return [];
+}
+
+function findingRowLabel(f: Finding, row: FindingRow): string {
+  if (f.id === "round_stance") {
+    return `Round ${String(row.tick).padStart(2, "0")} · ${row.total} posts (S ${row.pro} / U ${row.neu} / O ${row.con})`;
+  }
+  if (f.id === "most_cited") {
+    const pages = row.page_start != null
+      ? `p. ${row.page_start}${row.page_end != null && row.page_end !== row.page_start ? `–${row.page_end}` : ""}`
+      : "page not recorded";
+    return `${pages} · ${row.heading || row.chunk_id}`;
+  }
+  if (f.id === "agents") return `@${row.handle} · ${row.group} · ${row.name}`;
+  if (f.id === "groups") return `${row.group} · ${row.agents} agents`;
+  if (f.id === "pages") return `page ${row.page} · ${(row.chunks ?? []).length} chunks`;
+  if (f.id === "stance_changes") {
+    return `@${row.handle} · ${row.issue_id}: ${Number(row.first).toFixed(2)} → ${Number(row.last).toFixed(2)}`;
+  }
+  return JSON.stringify(row);
+}
+
+function findingRowCount(f: Finding, row: FindingRow): string {
+  if (f.id === "round_stance") return `${row.total} of ${f.denominator}`;
+  if (f.id === "most_cited") return `${row.citations} of ${f.denominator}`;
+  if (f.id === "agents" || f.id === "groups") return `${row.posts} of ${f.denominator}`;
+  if (f.id === "pages") return `${row.posts} of ${f.denominator}`;
+  if (f.id === "stance_changes") return `${Number(row.delta) > 0 ? "+" : ""}${Number(row.delta).toFixed(2)}`;
+  return "";
+}
+
+function FindingPostsDrawer({ title, ids, posts, onClose }: {
+  title: string;
+  ids: string[];
+  posts: Post[];
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  useFocusTrap(ref, onClose);
+  const set = new Set(ids);
+  const selected = posts.filter((p) => set.has(p.id));
+  return (
+    <>
+      <button className="scrim" onClick={onClose} aria-label="Close finding posts" />
+      <aside className="drawer" ref={ref} tabIndex={-1} role="dialog" aria-modal="true"
+             aria-labelledby="fp-title">
+        <div className="drawer-head">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="eyebrow">Counted records</span>
+            <h2 id="fp-title" className="t-h2">{title}</h2>
+            <span className="t-meta">{ids.length} post{ids.length === 1 ? "" : "s"} behind this count</span>
+          </div>
+          <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close finding posts">
+            <X size={15} />
+          </button>
+        </div>
+        <div className="drawer-body">
+          {selected.length === 0 ? (
+            <p className="t-meta">
+              These posts are outside the latest 2,000 loaded in the feed. The JSON export contains
+              every recorded post.
+            </p>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
+              {selected.slice(0, 100).map((p) => {
+                const overall = postOverallStance(p);
+                return (
+                  <li key={p.id} className="panel-2 p-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className={`av av-xs av-${overall}`} aria-hidden>{initials(p.name, p.handle)}</span>
+                      <span style={{ fontWeight: 600 }}>{p.name ?? p.agent_id}</span>
+                      <span className={`stance stance-${overall}`}>
+                        <span className={`sg sg-${overall}`} />
+                        {overall === "pro" ? "PRO" : overall === "con" ? "CON" : "NEUTRAL"}
+                      </span>
+                      <span className="t-id ml-auto">R{String(p.tick).padStart(2, "0")}</span>
+                    </div>
+                    <p className="t-post mt-1.5" style={{ fontSize: 13 }}>{p.text}</p>
+                    {p.cited_chunk_ids.length > 0 && (
+                      <p className="mt-1.5 flex flex-wrap gap-1.5">
+                        {p.cited_chunk_ids.map((c) => (
+                          <span key={c} className="cite" style={{ cursor: "default" }}>{c}</span>
+                        ))}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {selected.length > 100 && (
+            <p className="t-meta">Showing the first 100; the export has all {selected.length}.</p>
+          )}
+        </div>
+      </aside>
+    </>
   );
 }
 

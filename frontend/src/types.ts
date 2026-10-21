@@ -10,6 +10,8 @@ export interface RunListItem {
   ticks_total: number;
   created_at: string;
   llm_calls_used: number;
+  parent_run_id?: string | null;
+  branch_round?: number | null;
 }
 
 export interface RunDetail {
@@ -32,6 +34,11 @@ export interface RunDetail {
   started_at: string | null;
   finished_at: string | null;
   provider?: { name?: string; model?: string } | null;
+  manifest?: Record<string, unknown> | null;
+  parent_run_id?: string | null;
+  branch_round?: number | null;
+  llm_reserved?: number;
+  children?: { id: string; name: string; status: string; created_at: string }[];
 }
 
 export interface RunConfig {
@@ -59,6 +66,7 @@ export interface SourceStats {
   brief?: WorldBrief | null;
   truncated?: boolean;
   deduplicated?: boolean;
+  used_by?: number;
 }
 
 export interface BriefIssue {
@@ -77,6 +85,7 @@ export interface WorldBrief {
   key_claims: string[];
   entities: unknown[];
   fallback?: boolean;
+  generated_by?: { provider?: string; model?: string; from_cache?: boolean } | null;
 }
 
 export interface Estimate {
@@ -99,6 +108,7 @@ export interface Provider {
   base_url: string;
   key_env: string;
   has_key: boolean;
+  requires_key?: boolean;
   default_rpm: number | null;
   notes: string;
   supports_model_list: boolean;
@@ -120,6 +130,10 @@ export interface Post {
   reposts: number;
   replies: number;
   is_fallback: boolean;
+  seq?: number | null;
+  model?: string | null;
+  provider?: string | null;
+  via_fallback?: number;
 }
 
 export interface Agent {
@@ -141,6 +155,7 @@ export interface GraphNode {
   handle: string | null;
   name: string | null;
   archetype: string | null;
+  group?: string | null;
   mean_stance: number;
 }
 
@@ -174,8 +189,87 @@ export interface AppErrorShape {
 }
 
 export interface SettingsResponse {
-  settings: Record<string, unknown> & { keys: Record<string, boolean> };
+  settings: Record<string, unknown> & {
+    keys: Record<string, boolean>;
+    key_set_at?: Record<string, string>;
+  };
   keys: Record<string, boolean>;
+}
+
+export interface FindingRow {
+  tick?: number;
+  round?: number;
+  pro?: number;
+  neu?: number;
+  con?: number;
+  total?: number;
+  post_ids?: string[];
+  agent_ids?: string[];
+  chunk_id?: string;
+  page_start?: number | null;
+  page_end?: number | null;
+  heading?: string | null;
+  citations?: number;
+  agent_id?: string;
+  handle?: string;
+  name?: string;
+  group?: string;
+  posts?: number;
+  page?: number;
+  chunks?: string[];
+  issue_id?: string;
+  first?: number;
+  last?: number;
+  delta?: number;
+  [k: string]: unknown;
+}
+
+export interface Finding {
+  id: string;
+  title: string;
+  denominator: number;
+  unit: string;
+  summary?: string;
+  rows: FindingRow[];
+}
+
+export interface FindingsResponse {
+  run_id: string;
+  posts_total: number;
+  posts_with_source: number;
+  agents_total: number;
+  calls_total: number;
+  findings: Finding[];
+}
+
+export interface CompareSide {
+  run: RunDetail;
+  rounds: { tick: number; pro: number; neu: number; con: number; total: number }[];
+  citations: {
+    chunk_id: string; citations: number; heading: string | null;
+    page_start: number | null; page_end: number | null;
+  }[];
+  posts: number;
+  fallback_posts: number;
+  llm_calls: number;
+}
+
+export interface CompareResponse {
+  left: CompareSide;
+  right: CompareSide;
+  diffs: { posts: number; fallback_posts: number; citation_total: number; rounds: number };
+  label: string;
+  linked?: boolean;
+}
+
+export interface SampleInfo {
+  available: boolean;
+  imported: boolean;
+  run_id: string | null;
+  label: string | null;
+  description?: string | null;
+  source_file?: string | null;
+  mock?: boolean | null;
 }
 
 export interface TestReport {
