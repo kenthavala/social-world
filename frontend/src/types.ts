@@ -76,12 +76,48 @@ export interface BriefIssue {
   pro_label: string;
   con_label: string;
   evidence_chunk_ids: string[];
+  // Extended fields for issue definition
+  category?: string;
+  detailed_context?: string;
+  geographic_scope?: string;
+  time_horizon?: string;
+  current_situation?: string;
+  proposed_change?: string;
+  alternative_options?: string;
+  key_tradeoffs?: string;
+  evidence_sources?: string;
+  known_uncertainties?: string;
+  metrics?: string;
+  decision_question?: string;
 }
 
 export interface WorldBrief {
   summary: string;
   issues: BriefIssue[];
-  stakeholder_groups: { name: string; description: string; size_hint: string; stance_by_issue: Record<string, number> }[];
+  stakeholder_groups: {
+    name: string;
+    description: string;
+    size_hint: string;
+    stance_by_issue: Record<string, number>;
+    // Extended fields for stakeholder groups
+    population_weight?: number;
+    demographic_characteristics?: string;
+    geographic_distribution?: string;
+    economic_characteristics?: string;
+    interests?: string[];
+    priorities?: string[];
+    concerns?: string[];
+    incentives?: string;
+    constraints?: string;
+    typical_information_sources?: string[];
+    initial_stance?: number;
+    stance_distribution?: string;
+    influence?: number;
+    sensitivity?: number;
+    trust_level?: number;
+    institutional_power?: number;
+    behavioural_tendencies?: string;
+  }[];
   key_claims: string[];
   entities: unknown[];
   fallback?: boolean;

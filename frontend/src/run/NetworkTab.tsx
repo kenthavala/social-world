@@ -255,7 +255,9 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
                     }
                     ctx.globalAlpha = 1;
                   }) as never}
-                  onNodeClick={((n: NetNode) => setSel((cur) => (cur === n.id ? null : n.id))) as never}
+                  onNodeClick={((n: NetNode) => {
+                    setSel((cur) => (cur === n.id ? null : n.id));
+                  }) as never}
                   linkWidth={((l: NetLink) => 0.6 + Math.max(0, l.weight) * 2.4) as never}
                   linkColor={((l: NetLink) => {
                     if (!neighbours) return LINK_COLOR;

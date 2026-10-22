@@ -26,10 +26,17 @@ def _now() -> str:
 
 
 def _clamp_config(cfg: dict) -> dict:
+    """Clamp run configuration to safe, documented bounds.
+
+    Bounds are generous but enforced: agents 1..500, ticks 1..500, writes 0..50.
+    Values outside the range are silently clamped to the nearest bound rather than
+    rejected, so a misconfigured request cannot crash the run; the UI should warn
+    when the user's value differs from what was sent.
+    """
     out = {
-        "agents": max(5, min(100, int(cfg.get("agents", 16) or 16))),
-        "ticks": max(1, min(100, int(cfg.get("ticks", 12) or 12))),
-        "writes_per_tick": max(0, min(20, int(cfg.get("writes_per_tick", 4) or 4))),
+        "agents": max(1, min(500, int(cfg.get("agents", 16) or 16))),
+        "ticks": max(1, min(500, int(cfg.get("ticks", 12) or 12))),
+        "writes_per_tick": max(0, min(50, int(cfg.get("writes_per_tick", 4) or 4))),
         "pop_mix": {k: max(0.0, min(1.0, float((cfg.get("pop_mix") or {}).get(k, d))))
                     for k, d in (("pro", 0.3), ("con", 0.3), ("undecided", 0.4))},
         "seed": int(cfg.get("seed", random.randint(0, 2**31 - 1))),

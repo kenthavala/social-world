@@ -58,7 +58,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
   type Draft = Partial<{
     step: number; sourceId: string; name: string; scenario: string;
     agents: number; ticks: number; writesPerTick: number; seed: number; preset: string;
-    mix: { pro: number; con: number; neu: number };
+    mix: { pro: number; con: number; neu: number }; brief: WorldBrief | null;
   }>;
 
   const restoredRef = useRef(false);
@@ -101,12 +101,17 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
         if (draft.seed) setSeed(draft.seed);
         if (draft.preset) setPreset(draft.preset);
         if (draft.mix) setMix(draft.mix);
+        // Restore the brief from the draft first — unsaved edits must not be
+        // silently overwritten by a source re-fetch below.
+        if (draft.brief) setBrief(draft.brief);
         if (draft.sourceId) {
           try {
             const stats = await api.getSource(draft.sourceId);
             if (!cancelled) {
               setSource(stats);
-              if (stats.brief) setBrief(stats.brief);
+              // Only fall back to the source's stored brief when the draft
+              // carries none (e.g. first autosave after a fresh generation).
+              if (stats.brief && !draft.brief) setBrief(stats.brief);
               setName((cur) => cur || nameFromFile(stats.filename));
               setScenario((cur) => cur || scenarioFromBrief(stats.brief ?? null));
             }
@@ -126,13 +131,13 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     if (!restoredRef.current) return;
     const d: Draft = {
       step, sourceId: source?.source_id, name, scenario,
-      agents, ticks, writesPerTick, seed, preset, mix,
+      agents, ticks, writesPerTick, seed, preset, mix, brief,
     };
     try {
-      if (source || name || scenario) localStorage.setItem(DKEY, JSON.stringify(d));
+      if (source || name || scenario || brief) localStorage.setItem(DKEY, JSON.stringify(d));
       else localStorage.removeItem(DKEY);
     } catch { /* storage unavailable — autosave is best-effort */ }
-  }, [source, name, scenario, agents, ticks, writesPerTick, seed, preset, mix, step]);
+  }, [source, name, scenario, agents, ticks, writesPerTick, seed, preset, mix, brief, step]);
 
   useEffect(() => {
     if (step !== 3) return;
@@ -496,10 +501,50 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState<WorldBrief | null>(brief);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<"issues" | "groups">("issues");
   useEffect(() => setEdit(brief), [brief]);
   const draftQuestion = brief
     ? `How will the people affected respond to ${brief.issues.map((i) => i.name).join(" and ")}?`
     : "";
+
+  // Issue Categories
+  const ISSUE_CATEGORIES: { value: string; label: string }[] = [
+    { value: "policy.transport", label: "Policy → Transport" },
+    { value: "policy.education", label: "Policy → Education" },
+    { value: "policy.healthcare", label: "Policy → Healthcare" },
+    { value: "policy.housing", label: "Policy → Housing" },
+    { value: "policy.taxation", label: "Policy → Taxation" },
+    { value: "policy.employment", label: "Policy → Employment" },
+    { value: "policy.welfare", label: "Policy → Welfare" },
+    { value: "policy.environment", label: "Policy → Environment" },
+    { value: "policy.energy", label: "Policy → Energy" },
+    { value: "policy.agriculture", label: "Policy → Agriculture" },
+    { value: "policy.digital", label: "Policy → Digital Policy" },
+    { value: "policy.public_safety", label: "Policy → Public Safety" },
+    { value: "policy.infrastructure", label: "Policy → Infrastructure" },
+    { value: "policy.urban_planning", label: "Policy → Urban Planning" },
+    { value: "business.pricing", label: "Business → Pricing" },
+    { value: "business.product_launch", label: "Business → Product Launch" },
+    { value: "business.market_entry", label: "Business → Market Entry" },
+    { value: "business.regulation", label: "Business → Regulation" },
+    { value: "business.competition", label: "Business → Competition" },
+    { value: "business.supply_chain", label: "Business → Supply Chain" },
+    { value: "business.consumer_behaviour", label: "Business → Consumer Behaviour" },
+    { value: "business.brand_perception", label: "Business → Brand Perception" },
+    { value: "society.public_opinion", label: "Society → Public Opinion" },
+    { value: "society.community_conflict", label: "Society → Community Conflict" },
+    { value: "society.cultural_change", label: "Society → Cultural Change" },
+    { value: "society.social_policy", label: "Society → Social Policy" },
+    { value: "society.inequality", label: "Society → Inequality" },
+    { value: "society.demographic_change", label: "Society → Demographic Change" },
+    { value: "crisis.natural_disaster", label: "Crisis → Natural Disaster" },
+    { value: "crisis.public_health", label: "Crisis → Public Health" },
+    { value: "crisis.supply_disruption", label: "Crisis → Supply Disruption" },
+    { value: "crisis.economic_shock", label: "Crisis → Economic Shock" },
+    { value: "crisis.infrastructure_failure", label: "Crisis → Infrastructure Failure" },
+    { value: "crisis.reputation_crisis", label: "Crisis → Reputation Crisis" },
+    { value: "custom", label: "Custom" },
+  ];
 
   function patchIssue(i: number, patch: Partial<WorldBrief["issues"][number]>) {
     if (!edit) return;
@@ -511,20 +556,141 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
     setEdit({ ...edit, stakeholder_groups: edit.stakeholder_groups.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
   }
 
-  async function save() {
-    if (!sourceId || !edit) return;
+  function addIssue() {
+    if (!edit) return;
+    const newId = `iss_${edit.issues.length + 1}`;
+    setEdit({
+      ...edit,
+      issues: [...edit.issues, {
+        id: newId,
+        name: "New Issue",
+        question: "",
+        pro_label: "Supports",
+        con_label: "Opposes",
+        evidence_chunk_ids: [],
+        category: "custom",
+        detailed_context: "",
+        geographic_scope: "",
+        time_horizon: "",
+        current_situation: "",
+        proposed_change: "",
+        alternative_options: "",
+        key_tradeoffs: "",
+        evidence_sources: "",
+        known_uncertainties: "",
+        metrics: "",
+        decision_question: "",
+      }]
+    });
+  }
+
+  function removeIssue(i: number) {
+    if (!edit) return;
+    setEdit({ ...edit, issues: edit.issues.filter((_, j) => j !== i).map((iss, idx) => ({ ...iss, id: `iss_${idx + 1}` })) });
+  }
+
+  function duplicateIssue(i: number) {
+    if (!edit) return;
+    const iss = edit.issues[i];
+    setEdit({
+      ...edit,
+      issues: [...edit.issues.slice(0, i + 1), { ...iss, id: `iss_${edit.issues.length + 1}`, name: iss.name + " (copy)" }, ...edit.issues.slice(i + 1)]
+        .map((is, idx) => ({ ...is, id: `iss_${idx + 1}` }))
+    });
+  }
+
+  function moveIssue(i: number, direction: "up" | "down") {
+    if (!edit) return;
+    const issues = [...edit.issues];
+    const target = i + (direction === "up" ? -1 : 1);
+    if (target < 0 || target >= issues.length) return;
+    [issues[i], issues[target]] = [issues[target], issues[i]];
+    setEdit({ ...edit, issues: issues.map((iss, idx) => ({ ...iss, id: `iss_${idx + 1}` })) });
+  }
+
+  function addGroup() {
+    if (!edit) return;
+    const issues = edit.issues;
+    const newGroup = {
+      name: `Group ${edit.stakeholder_groups.length + 1}`,
+      description: "",
+      size_hint: "medium" as const,
+      population_weight: undefined,
+      demographic_characteristics: "",
+      geographic_distribution: "",
+      economic_characteristics: "",
+      interests: [],
+      priorities: [],
+      concerns: [],
+      incentives: "",
+      constraints: "",
+      typical_information_sources: [],
+      initial_stance: 0,
+      stance_distribution: "",
+      influence: 1,
+      sensitivity: 1,
+      trust_level: 0.5,
+      institutional_power: 1,
+      behavioural_tendencies: "",
+      stance_by_issue: Object.fromEntries(issues.map((iss) => [iss.id, 0])),
+    };
+    setEdit({ ...edit, stakeholder_groups: [...edit.stakeholder_groups, newGroup] });
+  }
+
+  function removeGroup(i: number) {
+    if (!edit) return;
+    setEdit({ ...edit, stakeholder_groups: edit.stakeholder_groups.filter((_, j) => j !== i) });
+  }
+
+  function duplicateGroup(i: number) {
+    if (!edit) return;
+    const g = edit.stakeholder_groups[i];
+    setEdit({ ...edit, stakeholder_groups: [...edit.stakeholder_groups, { ...g, name: g.name + " (copy)" }] });
+  }
+
+  async function save(): Promise<boolean> {
+    if (!sourceId || !edit) return false;
     setSaving(true);
     onError(null);
     try {
       const r = await api.updateBrief(sourceId, edit);
       setBrief(r.brief);
       setEditing(false);
+      return true;
     } catch (e) {
       onError(e);
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  // Calculate population representation for display
+  const populationData = useMemo(() => {
+    if (!edit) return { groups: [], totalWeight: 0, totalAgents: 0 };
+    const groups = edit.stakeholder_groups;
+    const weights = groups.map(g => g.population_weight ?? (g.size_hint === "large" ? 1.8 : g.size_hint === "small" ? 0.6 : 1.0));
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    return {
+      groups: groups.map((g, i) => ({
+        ...g,
+        interests: g.interests ?? [],
+        priorities: g.priorities ?? [],
+        concerns: g.concerns ?? [],
+        popWeight: g.population_weight ?? (g.size_hint === "large" ? 1.8 : g.size_hint === "small" ? 0.6 : 1.0),
+        popShare: totalWeight > 0 ? (g.population_weight ?? (g.size_hint === "large" ? 1.8 : g.size_hint === "small" ? 0.6 : 1.0)) / totalWeight : 1 / groups.length,
+        agentShare: 0, // will be filled after agents are seeded
+        deviation: 0,
+      })),
+      totalWeight,
+      totalAgents: 0,
+    };
+  }, [edit]);
+
+  const handleNext = async () => {
+    const success = await save();
+    if (success) onNext();
+  };
 
   return (
     <div className="panel panel-body">
@@ -532,8 +698,9 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
         <div>
           <h2 className="t-h2">Scenario</h2>
           <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 620 }}>
-            Name the simulation and pose the question. The configured model reads the document and
-            drafts the issues and stakeholder groups; edit them before continuing.
+            Name the simulation and pose the question. Define the issues and stakeholder groups with
+            categories, population weights, and detailed attributes. The model reads the document
+            and drafts a brief; edit it here before continuing.
           </p>
         </div>
         <GeneratedTag title="The scenario brief is drafted by the configured model from this source" />
@@ -573,61 +740,58 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
         {busy && <Spinner label="The model is reading your document…" />}
       </div>
 
-      {brief && !editing && (
+      {/* Issue / Group Tabs when brief exists */}
+      {brief && (
         <div className="mt-6">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="eyebrow">Scenario brief</span>
-              <GeneratedTag title={brief.generated_by?.model
-                ? `Generated by ${brief.generated_by.model} from this source; edit before running`
-                : "Drafted from this source; edit before running"} />
-              {brief.generated_by?.model && (
-                <span className="t-meta">by {brief.generated_by.provider || "provider"} / {brief.generated_by.model}</span>
-              )}
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(brief); setEditing(true); }}>
-              Edit issues and groups
+          <div className="flex flex-wrap gap-2 mb-4">
+            <button
+              className={`btn ${activeTab === "issues" ? "btn-accent" : "btn-ghost"}`}
+              onClick={() => setActiveTab("issues")}
+            >
+              Issues ({edit?.issues.length ?? brief.issues.length})
             </button>
+            <button
+              className={`btn ${activeTab === "groups" ? "btn-accent" : "btn-ghost"}`}
+              onClick={() => setActiveTab("groups")}
+            >
+              Stakeholder Groups ({edit?.stakeholder_groups.length ?? brief.stakeholder_groups.length})
+            </button>
+            {!editing && (
+              <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(brief); setEditing(true); }}>
+                Edit all
+              </button>
+            )}
           </div>
-          <div className="banner banner-info mb-4" style={{ alignItems: "flex-start" }}>
-            <span>
-              {brief.summary}
-              {brief.fallback && <span className="t-meta block mt-1">(fallback brief — the provider failed, so issues were derived deterministically from the document's structure)</span>}
-            </span>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {brief.issues.map((iss) => (
-              <div key={iss.id} className="panel-2 p-3.5">
-                <div className="flex items-center justify-between gap-2">
-                  <p style={{ fontWeight: 600 }}>{iss.name}</p>
-                  <span className="t-id">{iss.id}</span>
-                </div>
-                <p className="t-meta mt-1">{iss.question}</p>
-                <p className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                  <span className="badge st-pro">{iss.pro_label}</span>
-                  <span className="t-meta">vs</span>
-                  <span className="badge st-con">{iss.con_label}</span>
-                </p>
-                {iss.evidence_chunk_ids.length > 0 && sourceId && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <EvidenceChips sourceId={sourceId} ids={iss.evidence_chunk_ids} />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="mt-4">
-            <div className="eyebrow mb-2">Stakeholder groups — {brief.stakeholder_groups.length}</div>
-            <div className="grid gap-2">
-              {brief.stakeholder_groups.map((g) => (
-                <div key={g.name} className="panel-2 flex flex-wrap items-center gap-2 p-3">
-                  <span style={{ fontWeight: 600 }}>{g.name}</span>
-                  <span className="t-meta">{g.description}</span>
-                  <span className="badge ml-auto">{g.size_hint}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+
+          {activeTab === "issues" && (
+            <IssueBuilder
+              edit={edit}
+              brief={brief}
+              sourceId={sourceId}
+              busy={busy}
+              onError={onError}
+              onPatch={patchIssue}
+              onAdd={addIssue}
+              onRemove={removeIssue}
+              onDuplicate={duplicateIssue}
+              onMove={moveIssue}
+              categories={ISSUE_CATEGORIES}
+            />
+          )}
+
+          {activeTab === "groups" && (
+            <StakeholderGroupBuilder
+              edit={edit}
+              brief={brief}
+              populationData={populationData}
+              busy={busy}
+              onError={onError}
+              onPatch={patchGroup}
+              onAdd={addGroup}
+              onRemove={removeGroup}
+              onDuplicate={duplicateGroup}
+            />
+          )}
         </div>
       )}
 
@@ -675,7 +839,261 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
         </div>
       )}
 
-      <Nav onBack={onBack} nextLabel="Set up agents" onNext={brief ? onNext : undefined} busy={busy} />
+      {!brief && !editing && (
+        <p className="t-meta mt-4">
+          Generate a scenario brief first, then define issues and stakeholder groups in detail.
+        </p>
+      )}
+
+      <Nav onBack={onBack} nextLabel="Set up agents" onNext={brief ? handleNext : undefined} busy={busy || saving} />
+    </div>
+  );
+}
+
+function IssueBuilder({ edit, brief, sourceId, busy, onError, onPatch, onAdd, onRemove, onDuplicate, onMove, categories }: {
+  edit: WorldBrief | null;
+  brief: WorldBrief | null;
+  sourceId: string | null;
+  busy: boolean;
+  onError: (e: unknown) => void;
+  onPatch: (i: number, patch: Partial<WorldBrief["issues"][number]>) => void;
+  onAdd: () => void;
+  onRemove: (i: number) => void;
+  onDuplicate: (i: number) => void;
+  onMove: (i: number, direction: "up" | "down") => void;
+  categories: { value: string; label: string }[];
+}) {
+  if (!edit) return null;
+  const issues = edit.issues;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="eyebrow">Issues — {issues.length}</span>
+        <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={busy}>
+          <span>+ Add Issue</span>
+        </button>
+      </div>
+      {issues.length === 0 && (
+        <div className="panel-2 p-4 text-center">
+          <p className="t-meta">No issues defined yet. Add an issue to get started.</p>
+        </div>
+      )}
+      {issues.map((iss, i) => (
+        <div key={iss.id} className="panel-2 p-3.5 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="t-id">{iss.id}</span>
+              <span className="badge">{iss.category}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              {i > 0 && <button className="btn btn-ghost btn-sm btn-icon" onClick={() => onMove(i, "up")} title="Move up"><span>↑</span></button>}
+              {i < issues.length - 1 && <button className="btn btn-ghost btn-sm btn-icon" onClick={() => onMove(i, "down")} title="Move down"><span>↓</span></button>}
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => onDuplicate(i)} title="Duplicate"><span>⧉</span></button>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => onRemove(i)} title="Remove"><span>×</span></button>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field"><span className="label">Name</span>
+              <input className="input" value={iss.name} onChange={(e) => onPatch(i, { name: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Category</span>
+              <select className="input" value={iss.category} onChange={(e) => onPatch(i, { category: e.target.value })}>
+                {categories.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className="field"><span className="label">Question</span>
+            <textarea className="input" style={{ minHeight: 64 }} value={iss.question} onChange={(e) => onPatch(i, { question: e.target.value })} />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field"><span className="label">Pro label</span>
+              <input className="input" value={iss.pro_label} onChange={(e) => onPatch(i, { pro_label: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Con label</span>
+              <input className="input" value={iss.con_label} onChange={(e) => onPatch(i, { con_label: e.target.value })} />
+            </label>
+          </div>
+          <label className="field"><span className="label">Detailed context</span>
+            <textarea className="input" style={{ minHeight: 64 }} value={iss.detailed_context} onChange={(e) => onPatch(i, { detailed_context: e.target.value })} />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="field"><span className="label">Geographic scope</span>
+              <input className="input" value={iss.geographic_scope} onChange={(e) => onPatch(i, { geographic_scope: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Time horizon</span>
+              <input className="input" value={iss.time_horizon} onChange={(e) => onPatch(i, { time_horizon: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Current situation</span>
+              <input className="input" value={iss.current_situation} onChange={(e) => onPatch(i, { current_situation: e.target.value })} />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field"><span className="label">Proposed change</span>
+              <input className="input" value={iss.proposed_change} onChange={(e) => onPatch(i, { proposed_change: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Alternative options</span>
+              <input className="input" value={iss.alternative_options} onChange={(e) => onPatch(i, { alternative_options: e.target.value })} />
+            </label>
+          </div>
+          <label className="field"><span className="label">Key trade-offs</span>
+            <textarea className="input" style={{ minHeight: 64 }} value={iss.key_tradeoffs} onChange={(e) => onPatch(i, { key_tradeoffs: e.target.value })} />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field"><span className="label">Evidence sources</span>
+              <input className="input" value={iss.evidence_sources} onChange={(e) => onPatch(i, { evidence_sources: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Known uncertainties</span>
+              <input className="input" value={iss.known_uncertainties} onChange={(e) => onPatch(i, { known_uncertainties: e.target.value })} />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field"><span className="label">Metrics</span>
+              <input className="input" value={iss.metrics} onChange={(e) => onPatch(i, { metrics: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Decision question</span>
+              <input className="input" value={iss.decision_question} onChange={(e) => onPatch(i, { decision_question: e.target.value })} />
+            </label>
+          </div>
+          {iss.evidence_chunk_ids.length > 0 && sourceId && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className="eyebrow">Evidence chunks</span>
+              <EvidenceChips sourceId={sourceId} ids={iss.evidence_chunk_ids} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StakeholderGroupBuilder({ edit, brief, populationData, busy, onError, onPatch, onAdd, onRemove, onDuplicate }: {
+  edit: WorldBrief | null;
+  brief: WorldBrief | null;
+  populationData: { groups: { name: string; popWeight: number; popShare: number; agentShare: number; deviation: number; population_weight?: number; size_hint: string; description: string; interests?: string[]; priorities?: string[]; concerns?: string[]; incentives?: string; constraints?: string; typical_information_sources?: string[]; initial_stance?: number; stance_distribution?: string; influence?: number; sensitivity?: number; trust_level?: number; institutional_power?: number; behavioural_tendencies?: string; stance_by_issue: Record<string, number> }[]; totalWeight: number; totalAgents: number };
+  busy: boolean;
+  onError: (e: unknown) => void;
+  onPatch: (i: number, patch: Partial<WorldBrief["stakeholder_groups"][number]>) => void;
+  onAdd: () => void;
+  onRemove: (i: number) => void;
+  onDuplicate: (i: number) => void;
+}) {
+  if (!edit) return null;
+  const groups = edit.stakeholder_groups;
+  const issues = edit?.issues ?? brief?.issues ?? [];
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="eyebrow">Stakeholder Groups — {groups.length}</span>
+        <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={busy}>
+          <span>+ Add Group</span>
+        </button>
+      </div>
+      {groups.length === 0 && (
+        <div className="panel-2 p-4 text-center">
+          <p className="t-meta">No stakeholder groups defined yet. Add a group to get started.</p>
+        </div>
+      )}
+      {groups.map((g, i) => {
+        const popInfo = populationData.groups[i];
+        const popSharePct = popInfo ? Math.round(popInfo.popShare * 100) : 0;
+        return (
+          <div key={i} className="panel-2 p-3.5 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="t-id">Group {i + 1}</span>
+                <span className="badge">{g.size_hint}</span>
+                {popInfo && <span className="badge" style={{ background: "var(--accent)", color: "var(--accent-fg)" }}>{popSharePct}% population</span>}
+              </div>
+              <div className="flex items-center gap-1">
+                <button className="btn btn-ghost btn-sm btn-icon" onClick={() => onDuplicate(i)} title="Duplicate"><span>⧉</span></button>
+                <button className="btn btn-ghost btn-sm btn-icon" onClick={() => onRemove(i)} title="Remove"><span>×</span></button>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="field"><span className="label">Name</span>
+                <input className="input" value={g.name} onChange={(e) => onPatch(i, { name: e.target.value })} />
+              </label>
+              <label className="field"><span className="label">Population weight</span>
+                <input className="input" type="number" step="0.1" min="0" value={g.population_weight ?? ""} onChange={(e) => onPatch(i, { population_weight: e.target.value ? Number(e.target.value) : undefined })} />
+                <span className="hint">Relative weight (e.g. 1.0 = baseline, 1.8 = large). If empty, size_hint is used.</span>
+              </label>
+            </div>
+            <label className="field"><span className="label">Description</span>
+              <input className="input" value={g.description} onChange={(e) => onPatch(i, { description: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Demographic characteristics</span>
+              <input className="input" value={g.demographic_characteristics} onChange={(e) => onPatch(i, { demographic_characteristics: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Geographic distribution</span>
+              <input className="input" value={g.geographic_distribution} onChange={(e) => onPatch(i, { geographic_distribution: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Economic characteristics</span>
+              <input className="input" value={g.economic_characteristics} onChange={(e) => onPatch(i, { economic_characteristics: e.target.value })} />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="field"><span className="label">Influence</span>
+                <input className="input" type="number" step="1" min="0" max="10" value={g.influence} onChange={(e) => onPatch(i, { influence: Number(e.target.value) })} />
+              </label>
+              <label className="field"><span className="label">Sensitivity</span>
+                <input className="input" type="number" step="1" min="0" max="10" value={g.sensitivity} onChange={(e) => onPatch(i, { sensitivity: Number(e.target.value) })} />
+              </label>
+              <label className="field"><span className="label">Trust level</span>
+                <input className="input" type="number" step="0.1" min="0" max="1" value={g.trust_level} onChange={(e) => onPatch(i, { trust_level: Number(e.target.value) })} />
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="field"><span className="label">Institutional power</span>
+                <input className="input" type="number" step="1" min="0" max="10" value={g.institutional_power} onChange={(e) => onPatch(i, { institutional_power: Number(e.target.value) })} />
+              </label>
+              <label className="field"><span className="label">Initial stance</span>
+                <input className="input" type="number" step="0.1" min="-1" max="1" value={g.initial_stance} onChange={(e) => onPatch(i, { initial_stance: Number(e.target.value) })} />
+              </label>
+            </div>
+            <label className="field"><span className="label">Interests (comma-separated)</span>
+              <input className="input" value={g.interests?.join(", ") ?? ""} onChange={(e) => onPatch(i, { interests: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })} />
+            </label>
+            <label className="field"><span className="label">Priorities (comma-separated)</span>
+              <input className="input" value={g.priorities?.join(", ") ?? ""} onChange={(e) => onPatch(i, { priorities: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })} />
+            </label>
+            <label className="field"><span className="label">Concerns (comma-separated)</span>
+              <input className="input" value={g.concerns?.join(", ") ?? ""} onChange={(e) => onPatch(i, { concerns: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })} />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="field"><span className="label">Incentives</span>
+                <input className="input" value={g.incentives} onChange={(e) => onPatch(i, { incentives: e.target.value })} />
+              </label>
+              <label className="field"><span className="label">Constraints</span>
+                <input className="input" value={g.constraints} onChange={(e) => onPatch(i, { constraints: e.target.value })} />
+              </label>
+            </div>
+            <label className="field"><span className="label">Typical information sources (comma-separated)</span>
+              <input className="input" value={g.typical_information_sources?.join(", ") ?? ""} onChange={(e) => onPatch(i, { typical_information_sources: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })} />
+            </label>
+            <label className="field"><span className="label">Stance distribution</span>
+              <input className="input" value={g.stance_distribution} onChange={(e) => onPatch(i, { stance_distribution: e.target.value })} />
+            </label>
+            <label className="field"><span className="label">Behavioural tendencies</span>
+              <textarea className="input" style={{ minHeight: 64 }} value={g.behavioural_tendencies} onChange={(e) => onPatch(i, { behavioural_tendencies: e.target.value })} />
+            </label>
+            {issues.length > 0 && (
+              <div className="panel-2 p-3">
+                <span className="eyebrow">Initial stances per issue</span>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {issues.map((iss) => (
+                    <label key={iss.id} className="field">
+                      <span className="label">{iss.name} ({iss.id})</span>
+                      <input className="input" type="number" step="0.1" min="-1" max="1" value={g.stance_by_issue?.[iss.id] ?? 0}
+                        onChange={(e) => onPatch(i, { stance_by_issue: { ...g.stance_by_issue, [iss.id]: Number(e.target.value) } })} />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -20,6 +20,7 @@ import RunDetails from "./RunDetails";
 const AgentsTab = lazy(() => import("./AgentsTab"));
 const NetworkTab = lazy(() => import("./NetworkTab"));
 const AnalysisTab = lazy(() => import("./AnalysisTab"));
+const QualityTab = lazy(() => import("./QualityTab"));
 
 const TAB_STORE = "tsw-run-tab";
 
@@ -433,6 +434,11 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
             <div className="h-full overflow-y-auto px-4 py-4 md:px-7">
               <AnalysisTab run={run} posts={posts} runId={runId} bumpKey={bump}
                            onError={onError} />
+            </div>
+          )}
+          {tab === "quality" && (
+            <div className="h-full overflow-y-auto px-4 py-4 md:px-7">
+              <QualityTab run={run} runId={runId} onError={onError} />
             </div>
           )}
         </Suspense>

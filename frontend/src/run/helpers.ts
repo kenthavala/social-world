@@ -7,6 +7,7 @@ export const RUN_TABS = [
   { key: "agents", label: "Agents" },
   { key: "network", label: "Connections" },
   { key: "analysis", label: "Findings" },
+  { key: "quality", label: "Quality" },
 ] as const;
 
 export type RunTabKey = (typeof RUN_TABS)[number]["key"];
@@ -15,6 +16,7 @@ export type RunTabKey = (typeof RUN_TABS)[number]["key"];
 export function normalizeTab(t: string | null): RunTabKey {
   if (t === "overview" || t === "feed" || t === "events") return "live";
   if (t === "insights" || t === "log") return "analysis";
+  if (t === "quality") return "quality";
   return (RUN_TABS.some((x) => x.key === t) ? t : "live") as RunTabKey;
 }
 

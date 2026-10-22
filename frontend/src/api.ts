@@ -186,6 +186,16 @@ export const getMetrics = (id: string) => call<MetricsResponse>(`/api/runs/${id}
 
 export const getFindings = (id: string) => call<FindingsResponse>(`/api/runs/${id}/findings`);
 
+export const getRealism = (id: string) =>
+  call<{
+    run_id: string;
+    overall: { score: number | null; label: string; assessed_dimensions: number; total_dimensions: number; method: string };
+    predictive_accuracy: { status: string; label: string; observations: number; message: string };
+    validation: { connected: boolean; datasets: number; observations: number; message: string };
+    dimensions: { id: string; label: string; group: string; weight: number; status: string; score: number | null; explanation: string; evidence: Record<string, unknown> }[];
+    updated_at: string;
+  }>(`/api/runs/${id}/realism`);
+
 export const raiseBudget = (id: string, maxLlmCalls: number) =>
   call<RunDetail>(`/api/runs/${id}/budget`, json("POST", { max_llm_calls: maxLlmCalls }));
 

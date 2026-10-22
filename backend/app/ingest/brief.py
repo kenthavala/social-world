@@ -17,7 +17,9 @@ BRIEF_SYSTEM = (
     '"stakeholder_groups": [{"name": str, "description": str, "size_hint": "small|medium|large", '
     '"stance_by_issue": {"iss_N": -1.0..1.0}}], '
     '"key_claims": [{"text": str, "chunk_id": str}], "entities": [str]}\n'
-    "Rules: 1 to 3 issues, 3 to 8 stakeholder groups, every group gets a stance per issue. "
+    "Rules: identify every distinct contested issue the source raises — there is no "
+    "artificial upper bound on the number of issues or stakeholder groups. "
+    "Every stakeholder group must get a stance for every issue. "
     "Use the chunk ids you were given verbatim. Issue ids must be iss_1, iss_2... in order."
 )
 
@@ -84,8 +86,14 @@ def _map_prompts(source_id: str, scenario: str) -> list[list[dict]]:
     return out
 
 
-async def build_brief(source_id: str, scenario: str, gateway) -> dict:
-    """Generate the world brief. Costs 1-4 calls. Never raises: falls back deterministically."""
+async def build_brief(source_id: str, scenario: str, gateway,
+                      max_issues: int = 1, max_groups: int = 3) -> dict:
+    """Generate the world brief. Costs 1-4 calls. Never raises: falls back deterministically.
+
+    max_issues/max_groups are only used by the deterministic fallback when the LLM
+    cannot produce a valid brief; they let the fallback honour the user's requested
+    issue/group counts instead of silently defaulting to 1 issue / 3 groups.
+    """
     chunks = select_chunks(source_id, scenario)
     maps: list[str] = []
     n_chunks = db.scalar("SELECT COUNT(*) FROM chunks WHERE source_id=?", (source_id,)) or 0
@@ -112,7 +120,7 @@ async def build_brief(source_id: str, scenario: str, gateway) -> dict:
             return brief
     except Exception as e:  # noqa: BLE001 — never fail ingestion on brief problems
         fallback_error = str(e)[:200]
-    return _fallback_brief(scenario, source_id)
+    return _fallback_brief(scenario, source_id, n_issues=max_issues, n_groups=max_groups)
 
 
 def _looks_valid(brief: dict) -> bool:
@@ -133,7 +141,7 @@ def _sanitize_brief(raw: Any) -> dict:
     if not isinstance(raw, dict):
         return {}
     issues = []
-    for i, issue in enumerate((raw.get("issues") or [])[:3]):
+    for i, issue in enumerate((raw.get("issues") or [])):
         if not isinstance(issue, dict):
             continue
         iid = issue.get("id") or f"iss_{i + 1}"
@@ -145,11 +153,11 @@ def _sanitize_brief(raw: Any) -> dict:
             "question": str(issue.get("question") or issue.get("name") or "")[:300],
             "pro_label": str(issue.get("pro_label") or "Supports")[:40],
             "con_label": str(issue.get("con_label") or "Opposes")[:40],
-            "evidence_chunk_ids": [c for c in (issue.get("evidence_chunk_ids") or [])[:6]
+            "evidence_chunk_ids": [c for c in (issue.get("evidence_chunk_ids") or [])
                                    if isinstance(c, str)],
         })
     groups = []
-    for g in (raw.get("stakeholder_groups") or [])[:8]:
+    for g in (raw.get("stakeholder_groups") or []):
         if not isinstance(g, dict):
             continue
         stance = {}
@@ -190,20 +198,56 @@ def _sanitize_brief(raw: Any) -> dict:
     }
 
 
-def _fallback_brief(scenario: str, source_id: str) -> dict:
-    iid = "iss_1"
+def _fallback_brief(scenario: str, source_id: str, n_issues: int = 1,
+                    n_groups: int = 3) -> dict:
+    """Create a fallback brief used when LLM brief generation fails completely.
+
+    Supports arbitrary issue/group counts via n_issues/n_groups so the fallback
+    never silently truncates a user's requested configuration. Defaults match
+    the previous behaviour (1 issue, 3 groups).
+    """
+    n_issues = max(1, int(n_issues or 1))
+    n_groups = max(1, int(n_groups or 1))
+    iids = [f"iss_{i + 1}" for i in range(n_issues)]
+    issues = []
+    for idx, iid in enumerate(iids):
+        issues.append({
+            "id": iid,
+            "name": "Main question" if idx == 0 else f"Issue {idx + 1}",
+            "question": str(scenario)[:300],
+            "pro_label": "Supports",
+            "con_label": "Opposes",
+            "evidence_chunk_ids": [],
+        })
+    groups = []
+    for gidx in range(n_groups):
+        stance_by_issue = {}
+        if gidx == 0:
+            for iid in iids:
+                stance_by_issue[iid] = 0.0
+        elif gidx == 1 and len(iids) > 0:
+            stance_by_issue = {iids[0]: 0.5}
+            for iid in iids[1:]:
+                stance_by_issue[iid] = 0.0
+        elif gidx == 2 and len(iids) > 0:
+            stance_by_issue = {iids[0]: -0.5}
+            for iid in iids[1:]:
+                stance_by_issue[iid] = 0.0
+        else:
+            for iid in iids:
+                stance_by_issue[iid] = 0.0
+        size_hint = "large" if gidx == 0 else ("medium" if gidx < 4 else "small")
+        groups.append({
+            "name": {0: "Members of the public", 1: "Engaged supporters",
+                     2: "Sceptics"}.get(gidx, f"Group {gidx + 1}"),
+            "description": "Ordinary readers with mixed views",
+            "size_hint": size_hint,
+            "stance_by_issue": stance_by_issue,
+        })
     return {
         "summary": str(scenario)[:500],
-        "issues": [{"id": iid, "name": "Main question", "question": str(scenario)[:300],
-                    "pro_label": "Supports", "con_label": "Opposes", "evidence_chunk_ids": []}],
-        "stakeholder_groups": [
-            {"name": "Members of the public", "description": "Ordinary readers with mixed views",
-             "size_hint": "large", "stance_by_issue": {iid: 0.0}},
-            {"name": "Engaged supporters", "description": "People sympathetic to the pro side",
-             "size_hint": "medium", "stance_by_issue": {iid: 0.5}},
-            {"name": "Sceptics", "description": "People who doubt the main claims",
-             "size_hint": "medium", "stance_by_issue": {iid: -0.5}},
-        ],
+        "issues": issues,
+        "stakeholder_groups": groups,
         "key_claims": [],
         "entities": [],
         "fallback": True,
