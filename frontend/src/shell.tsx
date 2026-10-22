@@ -27,7 +27,7 @@ function parseNow() {
 
 import { parseHash as parseHashLocal } from "./router";
 
-const THEME_KEY = "oasis-theme";
+const THEME_KEY = "tsw-theme";
 
 export function useTheme() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {

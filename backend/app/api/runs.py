@@ -394,6 +394,172 @@ def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = N
     return {"posts": posts, "count": len(posts), "total": total}
 
 
+@router.get("/runs/{run_id}/realism")
+def get_realism(run_id: str) -> dict:
+    from app.analytics.realism import compute_realism
+    try:
+        return compute_realism(run_id)
+    except ValueError:
+        raise AppError("run not found", component="api", stage="realism", status_code=404)
+
+
+class ValidationDatasetIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    kind: str = Field(default="custom", max_length=60)
+    source: str = ""
+    notes: str = ""
+    data_json: dict = Field(default_factory=dict)
+
+
+class ValidationObservationIn(BaseModel):
+    dataset_id: str
+    run_id: str
+    metric: str = Field(min_length=1, max_length=80)
+    predicted: float
+    observed: float
+
+
+@router.get("/validation")
+def get_validation() -> dict:
+    datasets = db.query(
+        "SELECT id, name, kind, source, notes, created_at FROM validation_datasets"
+        " ORDER BY created_at DESC")
+    observations = db.query(
+        "SELECT id, dataset_id, run_id, metric, predicted, observed, error, created_at"
+        " FROM validation_observations ORDER BY id DESC LIMIT 500")
+    return {
+        "connected": bool(observations),
+        "datasets": [dict(d) for d in datasets],
+        "observations": [dict(o) for o in observations],
+        "message": ("Validation data not connected." if not observations
+                    else "Observed outcomes are connected; accuracy is not claimed automatically."),
+        "kinds": ["survey", "poll", "consultation", "election", "market", "policy",
+                  "historical", "custom"],
+    }
+
+
+@router.post("/validation/datasets")
+def create_validation_dataset(body: ValidationDatasetIn) -> dict:
+    dataset_id = "val_" + uuid.uuid4().hex[:10]
+    db.execute(
+        "INSERT INTO validation_datasets(id, name, kind, source, notes, data_json, created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        (dataset_id, body.name, body.kind, body.source[:300], body.notes[:1000],
+         db.j(body.data_json), _now()))
+    return {"dataset": {"id": dataset_id, "name": body.name, "kind": body.kind,
+                        "source": body.source, "notes": body.notes,
+                        "created_at": _now()}}
+
+
+@router.post("/validation/observations")
+def create_validation_observation(body: ValidationObservationIn) -> dict:
+    if db.query_one("SELECT id FROM validation_datasets WHERE id=?", (body.dataset_id,)) is None:
+        raise AppError("validation dataset not found", component="api",
+                       stage="validation", status_code=404)
+    if db.query_one("SELECT id FROM runs WHERE id=?", (body.run_id,)) is None:
+        raise AppError("run not found", component="api", stage="validation", status_code=404)
+    err = round(body.predicted - body.observed, 6)
+    cur = db.execute(
+        "INSERT INTO validation_observations(dataset_id, run_id, metric, predicted, observed,"
+        " error, created_at) VALUES(?,?,?,?,?,?,?)",
+        (body.dataset_id, body.run_id, body.metric, body.predicted, body.observed, err, _now()))
+    return {"observation": {"id": cur.lastrowid, "dataset_id": body.dataset_id,
+                            "run_id": body.run_id, "metric": body.metric,
+                            "predicted": body.predicted, "observed": body.observed,
+                            "error": err}}
+
+
+@router.get("/runs/{run_id}/validation")
+def get_run_validation(run_id: str) -> dict:
+    if db.query_one("SELECT id FROM runs WHERE id=?", (run_id,)) is None:
+        raise AppError("run not found", component="api", stage="validation", status_code=404)
+    rows = db.query(
+        "SELECT o.id, o.dataset_id, d.name AS dataset, o.metric, o.predicted, o.observed,"
+        " o.error, o.created_at FROM validation_observations o"
+        " LEFT JOIN validation_datasets d ON d.id=o.dataset_id"
+        " WHERE o.run_id=? ORDER BY o.id DESC", (run_id,))
+    return {"connected": bool(rows), "observations": [dict(r) for r in rows],
+            "message": ("Validation data not connected." if not rows
+                        else "Observed outcomes are connected; no automatic accuracy claim.")}
+
+
+@router.get("/runs/{run_id}/stance-changes")
+def get_stance_changes(run_id: str, agent_id: Optional[str] = None,
+                       issue_id: Optional[str] = None, limit: int = 300) -> dict:
+    sql = ("SELECT s.*, a.handle, a.name FROM stance_changes s"
+           " LEFT JOIN agents a ON a.id=s.agent_id AND a.run_id=s.run_id"
+           " WHERE s.run_id=?")
+    params: list[Any] = [run_id]
+    if agent_id:
+        sql += " AND s.agent_id=?"
+        params.append(agent_id)
+    if issue_id:
+        sql += " AND s.issue_id=?"
+        params.append(issue_id)
+    sql += " ORDER BY s.tick, s.id LIMIT ?"
+    params.append(max(1, min(1000, limit)))
+    rows = db.query(sql, params)
+    return {"changes": [dict(r) for r in rows]}
+
+
+@router.get("/runs/{run_id}/groups")
+def get_groups(run_id: str) -> dict:
+    """Counted stakeholder-group summary: representation, stance, posts, connections."""
+    brief_row = db.query_one(
+        "SELECT brief_json FROM sources WHERE id=(SELECT source_id FROM runs WHERE id=?)",
+        (run_id,))
+    brief = db.uj(brief_row["brief_json"], {}) if brief_row and brief_row["brief_json"] else {}
+    configured = {g.get("name"): g for g in (brief.get("stakeholder_groups") or [])}
+    agents = db.query("SELECT * FROM agents WHERE run_id=?", (run_id,))
+    posts = db.query("SELECT agent_id, kind FROM posts WHERE run_id=?", (run_id,))
+    edges = db.query("SELECT src, dst, weight, follows, interactions FROM edges WHERE run_id=?",
+                     (run_id,))
+    agent_group = {a["id"]: a["stakeholder_group"] for a in agents}
+    post_counts: dict[str, int] = {}
+    for p in posts:
+        g = agent_group.get(p["agent_id"]) or "unassigned"
+        post_counts[g] = post_counts.get(g, 0) + 1
+    internal: dict[str, int] = {}
+    external: dict[str, int] = {}
+    for e in edges:
+        g1 = agent_group.get(e["src"]) or "unassigned"
+        g2 = agent_group.get(e["dst"]) or "unassigned"
+        if g1 == g2:
+            internal[g1] = internal.get(g1, 0) + 1
+        else:
+            external[g1] = external.get(g1, 0) + 1
+            external[g2] = external.get(g2, 0) + 1
+    out = []
+    for name in sorted(set(configured) | set(agent_group.values())):
+        members = [a for a in agents if (a["stakeholder_group"] or "unassigned") == name]
+        stances = []
+        for a in members:
+            vals = [float(v.get("value", 0)) for v in (db.uj(a["stances_json"], {}) or {}).values()
+                    if isinstance(v, dict)]
+            if vals:
+                stances.append(sum(vals) / len(vals))
+        g = configured.get(name) or {}
+        out.append({
+            "name": name,
+            "description": g.get("description") or "",
+            "agents": len(members),
+            "population_weight": g.get("population_weight"),
+            "size_hint": g.get("size_hint"),
+            "mean_stance": round(sum(stances) / len(stances), 3) if stances else None,
+            "min_stance": round(min(stances), 3) if stances else None,
+            "max_stance": round(max(stances), 3) if stances else None,
+            "posts": post_counts.get(name, 0),
+            "internal_edges": internal.get(name, 0),
+            "external_edges": external.get(name, 0),
+            "influence": g.get("influence"),
+            "institutional_power": g.get("institutional_power"),
+            "concerns": g.get("concerns"),
+            "members": [{"id": a["id"], "handle": a["handle"], "name": a["name"]}
+                        for a in members],
+        })
+    return {"groups": out, "configured": len(configured), "agents": len(agents)}
+
+
 @router.get("/runs/{run_id}/findings")
 def get_findings(run_id: str) -> dict:
     from app.analytics.findings import build_findings

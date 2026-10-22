@@ -21,7 +21,7 @@ const AgentsTab = lazy(() => import("./AgentsTab"));
 const NetworkTab = lazy(() => import("./NetworkTab"));
 const AnalysisTab = lazy(() => import("./AnalysisTab"));
 
-const TAB_STORE = "oasis-run-tab";
+const TAB_STORE = "tsw-run-tab";
 
 export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
   runId: string;
@@ -79,8 +79,8 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
     void reloadRun();
     void reloadPosts();
     try {
-      if (sessionStorage.getItem("oasis-autostart") === runId) {
-        sessionStorage.removeItem("oasis-autostart");
+      if (sessionStorage.getItem("tsw-autostart") === runId) {
+        sessionStorage.removeItem("tsw-autostart");
         void api.startRun(runId).catch((e) => onError(e));
       }
     } catch { /* ignore */ }

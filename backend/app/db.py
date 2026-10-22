@@ -87,6 +87,22 @@ CREATE TABLE IF NOT EXISTS stream_events(
   created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_stream_events_run ON stream_events(run_id, id);
+CREATE TABLE IF NOT EXISTS stance_changes(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, tick INTEGER, agent_id TEXT,
+  issue_id TEXT, before_value REAL, after_value REAL, confidence REAL,
+  trigger_kind TEXT, trigger_post_id TEXT, trigger_agent_id TEXT, note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_stance_changes_run ON stance_changes(run_id, tick);
+CREATE INDEX IF NOT EXISTS idx_stance_changes_agent ON stance_changes(run_id, agent_id);
+CREATE TABLE IF NOT EXISTS validation_datasets(
+  id TEXT PRIMARY KEY, name TEXT, kind TEXT, source TEXT, notes TEXT,
+  data_json TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS validation_observations(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id TEXT, run_id TEXT, metric TEXT,
+  predicted REAL, observed REAL, error REAL, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_validation_obs_run ON validation_observations(run_id);
 CREATE TABLE IF NOT EXISTS reports(
   run_id TEXT PRIMARY KEY, created_at TEXT, analytics_json TEXT, report_md TEXT, report_json TEXT,
   essay_json TEXT, essay_meta_json TEXT
@@ -124,6 +140,9 @@ def connect() -> sqlite3.Connection:
             if v < 4:
                 self_migrate_v4(_conn)
                 _conn.execute("INSERT INTO schema_version(version) VALUES(4)")
+            if v < 5:
+                self_migrate_v5(_conn)
+                _conn.execute("INSERT INTO schema_version(version) VALUES(5)")
             _conn.commit()
         return _conn
 
@@ -180,6 +199,26 @@ def self_migrate_v4(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_run_agent ON posts(run_id, agent_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_stance_run_tick ON stance_history(run_id, tick)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_run ON llm_calls(run_id, id)")
+
+
+def self_migrate_v5(conn: sqlite3.Connection) -> None:
+    """v5: stance-change triggers and validation scaffolding. Additive and empty by default."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stance_changes("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, tick INTEGER, agent_id TEXT,"
+        " issue_id TEXT, before_value REAL, after_value REAL, confidence REAL,"
+        " trigger_kind TEXT, trigger_post_id TEXT, trigger_agent_id TEXT, note TEXT)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_stance_changes_run ON stance_changes(run_id, tick)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_stance_changes_agent ON stance_changes(run_id, agent_id)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS validation_datasets("
+        " id TEXT PRIMARY KEY, name TEXT, kind TEXT, source TEXT, notes TEXT,"
+        " data_json TEXT, created_at TEXT)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS validation_observations("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id TEXT, run_id TEXT, metric TEXT,"
+        " predicted REAL, observed REAL, error REAL, created_at TEXT)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_validation_obs_run ON validation_observations(run_id)")
 
 
 def reset(path_to_delete: Optional[Path] = None) -> None:

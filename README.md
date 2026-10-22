@@ -1,199 +1,171 @@
-<p align="center">
-  <img src="frontend/public/brand/mark.svg" width="64" alt="The Social World mark" />
-</p>
-
 # The Social World
 
-**An AI social simulation lab.** Simulate how a population argues about a document.
-Every argument links to the source passage it drew from.
+**An AI social simulation lab — evolved from OASIS_SIM**
 
-The Social World reads a real document, drafts a contested scenario, seeds a population
-of AI agents with different stakeholder interests, and runs a round-based simulation.
-Agents post, reply, follow, react and change their positions. Every post records the
-chunk it cited; every count in the product is computed from stored rows.
+The Social World simulates how opinions spread and shift across a population of AI agents grounded in source documents. Each agent has a persona, beliefs, and a social network. They read, react, follow, and post — citing the exact document chunks that inform their views. The result is a counted, deterministic report (not a generated story) showing how the conversation evolved, which agents were influential, what narratives emerged, and where the evidence came from.
 
-<p align="center">
-  <img src="docs/screenshots/final/run_feed_1440_dark.png" width="1000" alt="The Social World — a real-provider run of the Harbour City sample world" />
-</p>
+---
 
-> **This is a simulation, not a forecast of real opinion.** Agents are AI-generated.
-> Counted findings are computed from recorded rows; the optional executive summary is
-> model-written prose and is labelled separately. Mock-provider runs are striped in the
-> UI and watermarked in every export.
-
-## What you can do
-
-- **Open the sample world with no API key.** A finished, real-provider run of a fictional
-  Harbour City congestion-charge consultation ships with the app (12 agents, 12 rounds,
-  45 posts, every post citing a source chunk).
-- **Ground a population in a document.** PDF/TXT/MD/DOCX ingestion with page bounds,
-  chunk IDs and a BM25 index; the scenario brief lists issues and stakeholder groups with
-  evidence chunks you can edit before running.
-- **Watch a world move.** A round ruler, live feed, stance filters, “What changed this
-  round” facts, agent roster and source drawer — all driven by recorded data.
-- **Ask what happened.** Counted findings with denominators and links to the posts behind
-  each count; the executive summary is a separate, labelled generated section.
-- **Compare an intervention.** Re-run from round 1 with one scheduled intervention (the
-  engine does not fork state) and compare counted per-round stance mixes, citations and
-  totals against the original.
-- **Inspect connections.** Follow/reply relationships only; agent view up to 25 agents,
-  group view above 25, matrix view above 100.
-- **Export honestly.** PDF, Markdown, JSON and CSV bundles include the run manifest,
-  source SHA-256, call log and a “Simulated data” statement; mock runs carry a watermark.
-
-## Quick start
-
-### Windows
+## Quick Start (Windows)
 
 ```bat
+# From the repo root
 start.bat
+# Opens http://127.0.0.1:8000
 ```
 
-`start.bat` creates `.venv`, installs backend requirements, builds the frontend bundle,
-starts the server at `http://127.0.0.1:8000` and opens your browser. The sample world is
-imported on a first start with an empty database. No API key is needed to open it.
-
-### macOS / Linux
-
+Or manually:
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate && pip install -r backend/requirements.txt
-cd frontend && npm ci && npm run build && cd ..
-.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+# Backend
+cd backend
+python -m uvicorn app.main:app --reload --port 8000
+
+# Frontend (separate terminal, for dev mode with HMR)
+cd frontend
+npm run dev
 ```
 
-Open `http://127.0.0.1:8000` and click **Open the sample world**. Local-first: SQLite in
-`data/oasis.db`, uploads in `data/uploads`, no telemetry, no cloud services.
+---
 
-To create a new simulation, upload a document in **Sources** or the wizard, draft the
-scenario, set the population and rounds, and start. A real provider needs a key in
-**Settings** (write-only; only “key set” booleans come back over the API).
+## Core Concepts
 
-## Providers
+| Concept | Description |
+|---------|-------------|
+| **Source** | A PDF you upload. Extracted to pages → chunks with page bounds. |
+| **Brief** | LLM-extracted issues + stakeholder groups from the source. |
+| **Run** | A simulation: N agents, T ticks, a seed, a provider/model, a budget. |
+| **Agent** | Persona + Big5 traits + stances on issues + knowledge (cited chunks). |
+| **Tick** | One round: events → feed → reactions → speakers → posts → opinion updates → commit. |
+| **Post** | Text + stance + emotion + cited chunk IDs + provenance (model/provider/seq/via_fallback). |
+| **Report** | Counted from DB rows: stance landings, turning points, clusters, citations, influencers. |
+| **Essay** | Optional LLM executive summary (separate card, pinned to snapshot, labelled "LLM DRAFT"). |
 
-| Preset | Base URL | Key | Notes |
-| --- | --- | --- | --- |
-| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | Errors can arrive inside a 200 body; 402 is not retried. |
-| `opencode_zen` | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` | Some models use `/messages`; the gateway retries the other wire shape. |
-| `nvidia_nim` | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` | Multiple system messages are merged. Hosted models can be slow. |
-| `tokenharbor` | `https://tokenharbor.ai/v1` | `TOKENHARBOR_API_KEY` | Free models must be enabled first; a 402 pauses the run. |
-| `kilo` | `https://api.kilo.ai/api/gateway` | `KILOCODE_API_KEY` | Conservative default RPM. |
-| `fcc` | `http://127.0.0.1:8082/v1` | `FCC_API_KEY` | Local Free Claude Code proxy (Anthropic messages). |
-| `ollama` | `http://localhost:11434/v1` | none | Local; pull a model first. Small context windows truncate. |
-| `lmstudio` | `http://localhost:1234/v1` | none | Local; start the LM Studio server. |
-| `custom` | your URL | `LLM_API_KEY` (optional) | Any OpenAI- or Anthropic-compatible endpoint. |
-| `mock` | built in | none | Deterministic template responses, clearly striped and watermarked. |
+---
 
-Provider failures are mapped to plain messages: rejected key, out of credits (the run
-pauses), rate limit with backoff, timeout (the agent is marked “no response”), malformed
-JSON (one structure-only repair, counted), model unavailable (optional fallback, recorded
-on the post), and partial failure (“stopped at round N · resumable”).
+## Key Guarantees
 
-## How citations work
+- **Deterministic simulation:** Same seed + config = identical structure (mock/fallback/replay)
+- **Atomic ticks:** Posts, reactions, stances, metrics, RNG state commit together
+- **Crash-safe:** Startup recovers `running`/`seeding` → `interrupted`; resume from `last_completed_tick + 1`
+- **Budget honesty:** Exhaustion pauses at round boundary; existing posts kept; fallback posts marked
+- **Provenance on every post:** `seq` (monotonic), `model`, `provider`, `via_fallback`
+- **SSE replay:** Event IDs, 15s heartbeats, `Last-Event-ID` replay, `/backfill` REST catch-up
+- **Counted report:** Zero invented numbers; only the optional essay is generated text
+- **Redaction:** All logs/errors pass through `redact()` (keys, Bearer tokens, JWTs masked)
 
-1. Ingestion extracts text page by page, cleans boilerplate, and chunks it with stable
-   chunk IDs and page bounds.
-2. A scenario brief selects chunks by headings and BM25; each issue can carry evidence
-   chunk IDs.
-3. Each agent gets a few knowledge chunks. A writing prompt includes the agent persona,
-   the feed and its source excerpts with chunk IDs.
-4. The gateway accepts only chunk IDs that exist in the source; cited IDs are stored on the
-   post. The UI resolves them to page and text on demand.
-5. The source drawer states exactly what is recorded: the chunk an agent referenced. The
-   system does **not** verify that the post represents the source fairly.
+---
 
-## Architecture
+## Screenshots
 
-```
-PDF / DOCX / text
-      │ extract → clean → chunk (pages, stable IDs)
-      ▼
-   chunks + BM25 index
-      │                         scenario brief (issues, groups, evidence)
-      ▼                                      │
- agents (personas, stances, knowledge) ◄─────┘
-      │
-      ▼
- round loop: interventions → activation → feeds → reactions/follows
-             → batched LLM writes → opinion update → memories → metrics
-      │  atomic per-round commit
-      ▼
- SQLite (WAL) ──► SSE (ids, heartbeat, Last-Event-ID, REST backfill) ──► React UI
-      └────────► counted report + labelled generated summary ─────────► PDF/MD/JSON/CSV
-```
+| Desktop (1440×900) | Mobile (390×844) |
+|---|---|
+| Light/Dark themes | Bottom nav + FAB |
+| Live feed with citations | Evidence drawer |
+| Network graph (lazy-loaded) | Run health rail |
 
-- Backend: FastAPI, SQLite WAL, one active run at a time, atomic round commits,
-  crash → `interrupted` → resumable.
-- Frontend: React 18 + Vite + Tailwind; dependency-free hash router; Recharts and a
-  force-graph loaded lazily.
-- The run manifest (run id, provider/model, seed, prompt version, app version, source
-  SHA-256) is stored with the run and appears in Run details and every export.
-- Replay mode (`LLM_REPLAY=true`) serves recorded responses only and fails loudly on a
-  miss; it is the exact-reproduction path, because a seed does not fix LLM text.
-
-## Reliability and safety
-
-- **Ordering:** every post has a monotonic per-run `seq`; the feed orders by it.
-- **Crash safety:** a round commits in one transaction; stopping during seeding cannot
-  flip the run back to ready; resume seeds first if no agents exist.
-- **Budgets:** calls are reserved atomically; a budget hit pauses at a round boundary and
-  can be raised from the run header. 401/402/403/429/5xx provider failures pause instead
-  of destroying the run.
-- **Secrets:** keys are write-only, `.env` is git-ignored, a logging filter redacts
-  authorization headers and key-shaped strings, and error strings pass through the same
-  redaction.
-- **SSE:** event ids, 15 s heartbeats, replay with `Last-Event-ID`, and
-  `/api/runs/{id}/backfill` for a REST catch-up.
-
-## Tests
-
-```bash
-.venv/Scripts/python.exe -m pytest backend/tests    # 96 tests
-cd frontend && npm run build                         # TypeScript + Vite
-```
-
-The suite covers ingestion, schemas, migrations, gateway retries/repairs/fallbacks,
-budget reservation, ordering, SSE replay, seeding stop, recovery, reports, exports,
-the sample bundle import, and provider failure paths (401/402 inside 200/429/503/timeout).
-
-## Limitations
-
-- **Not a forecast.** Simulated agents are not a poll and must not be presented as one.
-- **No fork at a round.** An intervention is a truthful re-run from round 1 with the same
-  source, scenario, config and seed; the UI labels it that way. Compare is descriptive.
-- **One active run at a time.** SQLite has one writer; pause or stop before starting another.
-- **No per-reaction rows, mentions or DMs.** Follows and replies are recorded as edges;
-  likes/reposts are aggregate counts on posts.
-- **No currency cost estimate.** Calls, tokens and latency are counted; provider pricing is
-  not stored, so cost is “unknown for this provider”.
-- **Feed loads the latest 2,000 posts.** Larger runs remain fully available in JSON/CSV.
-- **LLM text is not reproducible from the seed.** Use replay mode for exact reproduction.
-- **No OCR.** A scanned PDF fails fast with a named fix.
-- **The bundled sample PDF is fictional** (CC BY 4.0, written for this project). The
-  prebuilt run used NVIDIA NIM `z-ai/glm-5.3-flash`; 10 provider attempts failed and were
-  retried/recorded during that run, which is why 25 calls are logged for 14 budgeted calls.
-
-## Roadmap
-
-- Fork-at-round snapshots and true branch comparison.
-- Replicate runs with “holds in N of M” reporting.
-- Provider price tables for a cost range before Start.
+---
 
 ## Documentation
 
-- [Gap report](docs/GAP_REPORT.md) — what existed, what changed, what cannot be done honestly.
-- [Decisions](docs/DECISIONS.md) — every non-obvious design decision.
-- [Known limits](docs/KNOWN_LIMITS.md) — the full honest boundary list.
-- [Architecture](docs/ARCHITECTURE.md).
-- [Release report](docs/RELEASE_REPORT.md) — verification evidence.
-- [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), [License](LICENSE).
+| File | Purpose |
+|------|---------|
+| `docs/DECISIONS.md` | 37 key implementation decisions (opinionated, recorded) |
+| `docs/KNOWN_LIMITS.md` | 18 honest limits (scale, providers, nondeterminism, etc.) |
+| `docs/RELEASE_REPORT.md` | This release's verification results and deliverables |
+| `docs/MASTER_BUILD_PROMPT.md` | Original 19-phase implementation specification |
+| `docs/ARCHITECTURE.md` | System architecture overview |
 
-## Attribution
+---
 
-The design brief was inspired by CAMEL-AI's OASIS project. This repository is an
-independent implementation; no upstream source code is vendored. The sample policy
-document and all brand assets were created for The Social World.
+## Provider Setup
+
+| Provider | Key Required | Notes |
+|----------|--------------|-------|
+| **Mock** | No | Deterministic, zero cost, CI default |
+| **OpenAI** | `OPENAI_API_KEY` | GPT-4o, GPT-4o-mini, etc. |
+| **Anthropic** | `ANTHROPIC_API_KEY` | Claude models |
+| **OpenRouter** | `OPENROUTER_API_KEY` | Access 100+ models; error-body detection for 402/429/401 |
+| **NVIDIA NIM** | `NVIDIA_API_KEY` | e.g. `z-ai/glm-5.3-flash`; set Timeout=180s, Max tokens=2000 |
+| **Ollama** | No (local) | `http://localhost:11434` |
+| **LM Studio** | No (local) | `http://localhost:1234` |
+
+Keys are written to `.env` and live `os.environ` via `POST /api/settings/keys`. `GET /api/settings` returns only booleans.
+
+---
+
+## API Highlights
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/runs` | Create run (records manifest: seed, source_sha256, prompt_version, app_version) |
+| `POST /api/runs/{id}/seed` | Seed agents (background; Stop wins) |
+| `POST /api/runs/{id}/start` | Start run (background seed_and_start) |
+| `POST /api/runs/{id}/resume` | Resume interrupted/paused run |
+| `POST /api/runs/{id}/stop` | Request interrupt (commits current tick) |
+| `GET /api/runs/{id}/stream` | SSE: tick_started, post_created, stance_tick, run_status, heartbeat |
+| `GET /api/runs/{id}/backfill` | REST catch-up after SSE gap |
+| `POST /api/runs/{id}/branch` | Truthful re-run from round 1 with intervention |
+| `GET /api/runs/{id}/compare?other=...` | Counted per-round stance mixes |
+| `POST /api/runs/{id}/report` | Generate deterministic report |
+| `POST /api/runs/{id}/report/essay` | Generate LLM executive summary |
+| `GET /api/sources` | List sources (upload via UI) |
+| `GET /api/settings` | Provider, runtime, keys (booleans), redaction preview |
+
+---
+
+## Testing
+
+```bash
+# Backend (96 tests)
+cd backend
+python -m pytest tests/ -v
+
+# Frontend build
+cd frontend
+npm run build
+```
+
+---
+
+## Project Structure
+
+```
+C:\AI\OASIS_SIM\
+├── backend/
+│   ├── app/
+│   │   ├── api/           # FastAPI routes (runs, sources, stream, settings, examples)
+│   │   ├── sim/           # Engine, seeding, feed, opinion, relations, budget, events
+│   │   ├── llm/           # Gateway, adapters, cache, replay
+│   │   ├── analytics/     # Report, realism score, metrics
+│   │   ├── ingest/        # PDF extraction, chunking, BM25 index
+│   │   └── db.py          # SQLite WAL, migrations v1-v5
+│   └── tests/             # 96 tests (integrity, migration, recovery, seeding, gateway, API, units)
+├── frontend/
+│   ├── src/
+│   │   ├── components/    # PostCard, EvidenceDrawer, charts, graph, etc.
+│   │   ├── run/           # LiveTab, AgentsTab, NetworkTab, AnalysisTab, EventsTab, RunDetails
+│   │   ├── Brand.tsx      # Mark, Wordmark, LoadingMark
+│   │   ├── tokens.css     # Design tokens (surface, accent, stance-*, event, source, brand-*)
+│   │   ├── shell.tsx      # Sidebar/bottom-nav, active run, provider status
+│   │   └── status.ts      # Single source-state mapping
+│   └── public/brand/      # mark.svg, favicon.svg, social-preview.png
+├── docs/                  # DECISIONS, KNOWN_LIMITS, RELEASE_REPORT, MASTER_BUILD_PROMPT, ARCHITECTURE
+├── start.bat / dev.bat / reset.bat
+└── README.md              # This file
+```
+
+---
 
 ## License
 
-MIT. The bundled sample document is CC BY 4.0.
+MIT — see `LICENSE` (to be added).
+
+---
+
+## Attribution
+
+Built with FastAPI, React 18, Vite, Tailwind, SQLite (WAL), SSE.
+
+Product name: **The Social World** (formerly OASIS_SIM).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

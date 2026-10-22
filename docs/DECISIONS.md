@@ -311,8 +311,8 @@
     (`model/provider/via_fallback`) so a fallback is visible in the feed and
     exports.
 
-37. **The public name changed; internal identifiers did not.** The product is
+37. **The public name changed; internal identifiers updated to tsw- prefix.** The product is
     **The Social World** everywhere a user or repository visitor sees it. The
-    SQLite filename `oasis.db`, localStorage keys (`oasis-theme`,
-    `oasis-wizard-draft`, `oasis-run-tab`, `oasis-autostart`) and API paths are
-    unchanged so existing installations and preferences keep working.
+    SQLite filename remains `oasis.db` (unchanged for migrations); localStorage
+    keys updated to `tsw-theme`, `tsw-wizard-draft`, `tsw-run-tab`,
+    `tsw-autostart`; API paths unchanged.

@@ -54,7 +54,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
   const [mix, setMix] = useState({ pro: 30, con: 30, neu: 40 });
 
   // -- real autosave: wizard state survives refresh/cancel-return --------------
-  const DKEY = "oasis-wizard-draft";
+  const DKEY = "tsw-wizard-draft";
   type Draft = Partial<{
     step: number; sourceId: string; name: string; scenario: string;
     agents: number; ticks: number; writesPerTick: number; seed: number; preset: string;
