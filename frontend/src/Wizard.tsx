@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { ArrowLeft, ArrowRight, FileText, LayoutGrid, LibraryBig, Upload, Wand2, X } from "lucide-react";
 import type { EstimateResponse, RunDetail, SourceStats, WorldBrief } from "./types";
 import * as api from "./api";
@@ -43,6 +43,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
   const [source, setSource] = useState<SourceStats | null>(null);
   const [scenario, setScenario] = useState("");
   const [brief, setBrief] = useState<WorldBrief | null>(null);
+  const [edit, setEdit] = useState<WorldBrief | null>(null);
   const [busy, setBusy] = useState(false);
   const [est, setEst] = useState<EstimateResponse | null>(null);
 
@@ -59,9 +60,11 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     step: number; sourceId: string; name: string; scenario: string;
     agents: number; ticks: number; writesPerTick: number; seed: number; preset: string;
     mix: { pro: number; con: number; neu: number }; brief: WorldBrief | null;
+    edit: WorldBrief | null;
   }>;
 
   const restoredRef = useRef(false);
+
 
   useEffect(() => {
     // A source chosen elsewhere (Documents → New simulation) wins over the draft;
@@ -80,7 +83,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
           const stats = await api.getSource(initialSource);
           if (!cancelled) {
             setSource(stats);
-            if (stats.brief) setBrief(stats.brief);
+            if (stats.brief) { setBrief(stats.brief); setEdit(stats.brief); }
             setName((cur) => cur || nameFromFile(stats.filename));
             setScenario((cur) => cur || scenarioFromBrief(stats.brief ?? null));
           }
@@ -104,14 +107,22 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
         // Restore the brief from the draft first — unsaved edits must not be
         // silently overwritten by a source re-fetch below.
         if (draft.brief) setBrief(draft.brief);
+        // `edit` is the wizard's working copy and the single source of truth
+        // for the issue/group builders, so it must be restored here; without
+        // this the user's added issues are lost on reload (D004/D007/D011).
+        setEdit(draft.edit ?? draft.brief ?? null);
         if (draft.sourceId) {
           try {
             const stats = await api.getSource(draft.sourceId);
             if (!cancelled) {
               setSource(stats);
               // Only fall back to the source's stored brief when the draft
-              // carries none (e.g. first autosave after a fresh generation).
-              if (stats.brief && !draft.brief) setBrief(stats.brief);
+              // carries neither a brief nor an in-progress edit (e.g. first
+              // autosave after a fresh generation).
+              if (stats.brief && !draft.brief && !draft.edit) {
+                setBrief(stats.brief);
+                setEdit(stats.brief);
+              }
               setName((cur) => cur || nameFromFile(stats.filename));
               setScenario((cur) => cur || scenarioFromBrief(stats.brief ?? null));
             }
@@ -131,13 +142,31 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     if (!restoredRef.current) return;
     const d: Draft = {
       step, sourceId: source?.source_id, name, scenario,
-      agents, ticks, writesPerTick, seed, preset, mix, brief,
+      agents, ticks, writesPerTick, seed, preset, mix, brief, edit,
     };
     try {
-      if (source || name || scenario || brief) localStorage.setItem(DKEY, JSON.stringify(d));
+      if (source || name || scenario || brief || edit) localStorage.setItem(DKEY, JSON.stringify(d));
       else localStorage.removeItem(DKEY);
     } catch { /* storage unavailable — autosave is best-effort */ }
-  }, [source, name, scenario, agents, ticks, writesPerTick, seed, preset, mix, brief, step]);
+  }, [source, name, scenario, agents, ticks, writesPerTick, seed, preset, mix, brief, edit, step]);
+
+  // Persist on every step transition and beforeunload so unsaved edits survive
+  // navigation and refresh (D004/D007). Idempotent: localStorage is overwritten.
+  useEffect(() => {
+    const persist = () => {
+      try {
+        const d: Draft = {
+          step, sourceId: source?.source_id, name, scenario,
+          agents, ticks, writesPerTick, seed, preset, mix, brief, edit,
+        };
+        if (source || name || scenario || brief || edit) {
+          localStorage.setItem(DKEY, JSON.stringify(d));
+        }
+      } catch { /* storage unavailable */ }
+    };
+    window.addEventListener('beforeunload', persist);
+    return () => window.removeEventListener('beforeunload', persist);
+  }, [step, source, name, scenario, agents, ticks, writesPerTick, seed, preset, mix, brief, edit]);
 
   useEffect(() => {
     if (step !== 3) return;
@@ -153,7 +182,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     try {
       const stats = file ? await api.uploadSource(file!) : await api.uploadSourceText(text!);
       setSource(stats);
-      if (stats.brief) setBrief(stats.brief);
+      if (stats.brief) { setBrief(stats.brief); setEdit(stats.brief); }
     } catch (e) {
       onError(e);
     } finally {
@@ -167,7 +196,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     try {
       const stats = await api.getSource(sid);
       setSource(stats);
-      if (stats.brief) setBrief(stats.brief);
+      if (stats.brief) { setBrief(stats.brief); setEdit(stats.brief); }
       setName((cur) => cur || nameFromFile(stats.filename));
       setScenario((cur) => cur || scenarioFromBrief(stats.brief ?? null));
     } catch (e) {
@@ -182,6 +211,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     try {
       const r = await api.generateBrief(source.source_id, scenario);
       setBrief(r.brief);
+      setEdit(r.brief);
     } catch (e) {
       onError(e);
     } finally {
@@ -278,6 +308,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
           name={name} setName={setName}
           scenario={scenario} setScenario={setScenario}
           brief={brief} setBrief={setBrief}
+          edit={edit} setEdit={setEdit}
           busy={busy}
           onError={onError}
           onGenerate={handleBrief}
@@ -482,7 +513,7 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
   );
 }
 
-function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setBrief,
+function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setBrief, edit, setEdit,
   busy, onError, onGenerate, onBack, onNext }: {
   sourceId: string | null;
   name: string;
@@ -491,6 +522,8 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
   setScenario: (s: string) => void;
   brief: WorldBrief | null;
   setBrief: (b: WorldBrief) => void;
+  edit: WorldBrief | null;
+  setEdit: Dispatch<SetStateAction<WorldBrief | null>>;
   busy: boolean;
   onError: (e: unknown) => void;
   onGenerate: () => void;
@@ -499,10 +532,8 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
 }) {
   const canGen = scenario.trim().length > 0;
   const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState<WorldBrief | null>(brief);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"issues" | "groups">("issues");
-  useEffect(() => setEdit(brief), [brief]);
   const draftQuestion = brief
     ? `How will the people affected respond to ${brief.issues.map((i) => i.name).join(" and ")}?`
     : "";
@@ -655,6 +686,7 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
     try {
       const r = await api.updateBrief(sourceId, edit);
       setBrief(r.brief);
+      setEdit(r.brief);
       setEditing(false);
       return true;
     } catch (e) {
@@ -1160,12 +1192,12 @@ function StepAgents(p: {
       <div className="grid gap-5 sm:grid-cols-2">
         <label className="field">
           <span className="label">Agents <span className="opt mono">{p.agents}</span></span>
-          <input type="range" min={5} max={100} value={p.agents}
+          <input type="range" min={5} max={500} value={p.agents}
                  onChange={(e) => p.setAgents(+e.target.value)} className="w-full" />
         </label>
         <label className="field">
           <span className="label">Rounds <span className="opt mono">{p.ticks}</span></span>
-          <input type="range" min={1} max={100} value={p.ticks}
+          <input type="range" min={1} max={500} value={p.ticks}
                  onChange={(e) => p.setTicks(+e.target.value)} className="w-full" />
         </label>
         <label className="field">

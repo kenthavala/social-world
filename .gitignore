@@ -11,3 +11,5 @@ __pycache__/
 *.log
 *.orig
 frontend/tsconfig.tsbuildinfo
+frontend/playwright-report/
+frontend/test-results/

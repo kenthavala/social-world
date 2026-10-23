@@ -9,7 +9,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("OASIS_DATA_DIR", ROOT / "data"))
 ENV_FILE = ROOT / ".env"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
