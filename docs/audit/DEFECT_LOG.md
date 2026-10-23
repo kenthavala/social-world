@@ -262,14 +262,14 @@ Post-fix console evidence, same instrumentation, same command:
   `await expect(page.getByRole('button', { name: /(?:Draft|Review) the scenario/i })).toBeVisible({ timeout: 30000 });`
   No assertion was weakened; the fix makes the spec exercise the fresh-database path.
 
-### D013: Phase 1 spec cannot complete Steps 4-5 — tab state and locator depth (NOT FIXED — hard stop)
+### D013: Phase 1 spec cannot complete Steps 4-5 — tab state and locator depth (FIXED)
 
 - **File:** `frontend/e2e/phase1-dod.spec.ts:102,117,126,140`
 - **Decision: the TEST is wrong; the PRODUCT is correct.** No product behaviour is at fault — a user on the Groups tab would simply click the Issues tab.
 - **(a) Wrong tab.** Line 102 clicks "Stakeholder Groups" to count groups and never switches back. Issue rows render only on the Issues tab, so at line 117 the `span.t-id` holding `iss_1` does not exist. Confirmed from the failure snapshot, which reports `button "Stakeholder Groups (6)" [active]`.
 - **(b) Wrong depth.** Line 117 goes `span.t-id` → `..` → `..`. In `IssueBuilder` the markup is row panel (`panel-2`) → header div → `flex items-center gap-2` → `span.t-id`; two levels up is the header div, which holds only the move/duplicate/remove buttons and **no `<input>`**. Reaching the panel that holds the Name input needs three levels (or a row-scoped locator). Line 126 repeats the mistake with a single `locator('..')`.
 - **(c) Same tab problem at Step 5.** Line 140 reads group `span.t-id`s while the Issues tab is active (the reload resets `activeTab` to its `"issues"` default), so `namesFinal` would be empty and the strict `toEqual` on line 141 would fail. Not reached by the observed runs — this one is derived from the source, not executed.
-- **Not fixed.** The run fails after the Task 5 fix for a reason other than reload persistence, which this sprint's brief marks as a hard stop ("stop and report — do not chase a new bug inside this session"). The decision is recorded here and the proposed patch is left for the operator to approve:
+- **Fixed.** Originally left unfixed under the sprint's hard stop (a post-Task-5 failure for a reason other than reload persistence). The operator reviewed the decision and approved fixing it; the patch below was applied close to verbatim (a tab click plus row-scoped locators), no assertion was weakened, and the two further spec defects it exposed are D014 and D015.
 
 ```ts
 // Step 4 — return to the Issues tab, and scope the row by panel rather than by DOM depth
@@ -286,3 +286,44 @@ const nameValue = await issueRow.getByRole('textbox', { name: 'Name' }).inputVal
 await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
 const namesFinal = await page.locator('span.t-id:has-text("Group")').allTextContents();
 ```
+
+### D014: Phase 1 spec's agents-slider locator is ambiguous
+
+- **File:** `frontend/e2e/phase1-dod.spec.ts:157`
+- **Decision: the TEST is wrong.**
+- `getByRole('slider', { name: /Agents/i })` resolved to two elements — the agents slider (`Agents 8`) and the writes-per-round slider, whose accessible name carries a hint that mentions "agent":
+  `strict mode violation: getByRole('slider', { name: /Agents/i }) resolved to 2 elements: 1) <input min="5" max="500" value="8" type="range"/> aka getByRole('slider', { name: 'Agents 8' }) 2) <input min="0" max="20" value="4" type="range"/> aka getByRole('slider', { name: 'Writes per round 4 How many…' })`
+- **Fix:** anchor the name — `page.getByRole('slider', { name: /^Agents/ })`.
+
+### D015: Phase 1 spec's timeout is shorter than the work it awaits
+
+- **File:** `frontend/e2e/phase1-dod.spec.ts:17`
+- **Decision: the TEST is wrong (its configuration).**
+- The spec drove a real simulation run under Playwright's 30s default test timeout. The run completed in **17.7s** once D016 was fixed, but the timeout left no headroom, and the Step 8 completion poll (up to 30 × 2s) could never have finished inside 30s. The observed failure was `page.waitForTimeout: Test timeout of 30000ms exceeded`.
+- **Fix:** `test.describe.configure({ retries: 0, timeout: 300000 })`. No assertion changed — this only gives the run time to finish.
+
+### D016: "Start run" never starts the run — sessionStorage handoff key mismatch (PRODUCT bug, FIXED)
+
+- **Files:** `frontend/src/Wizard.tsx:244` (writer) vs `frontend/src/run/RunShell.tsx:83` (reader)
+- **Symptom:** pressing **Start run** creates the run and navigates to the run page, but the run stays in `draft` forever. Observed directly in the E2E's database:
+  `RUN: ('run_0fb5868c56', 'draft', created_at == updated_at)` — the row was never touched after creation, so nothing had started it. There is no error surfaced to the user; the run page simply shows a Start control instead.
+- **Root cause:** the writer and reader disagree on the key. `Wizard.launch()` writes `sessionStorage.setItem("oasis-autostart", run.id)` (comment: *"Launch intent: the run page performs the actual start"*), while `RunShell` reads and consumes `sessionStorage.getItem("tsw-autostart")`. The read side has therefore never matched the written key, so the auto-start branch is dead code.
+- **Why `oasis-autostart` is the stale one:** every other storage key in the app uses the `tsw-` prefix — `tsw-run-tab` (RunShell), `tsw-theme` (shell), `tsw-wizard-draft` (Wizard), and `tsw-autostart` (the reader). `git log -S` shows `oasis-autostart` present at the pre-rename `1e42b9a` OASIS M4 baseline while `tsw-autostart` appears only from `b6bda65 feat: The Social World`, i.e. the reader was renamed with the product and the writer was missed. `oasis-autostart` is the only `oasis-`-prefixed key left anywhere in `frontend/src`.
+- **Decision: the PRODUCT is wrong.** This is not a test artifact — it is the user's real launch path, and it silently fails.
+- **Fix:** `frontend/src/Wizard.tsx:244` now writes `"tsw-autostart"`, matching the reader and the codebase convention.
+- **Verification:** after the fix the E2E's run completed end to end — `status: 'completed'`, 5 issues (`iss_1`..`iss_5`), 6 groups, 16 agents, 8 ticks, 32 posts, 149 relationships, 3 Louvain communities, and a generated report. The whole run took 17.7s.
+
+### D017: report and findings label issues by internal id, and the report omits stakeholder groups (OPEN — needs an operator decision)
+
+- **Files:** `backend/app/analytics/report.py:416-418`, `backend/app/analytics/findings.py`
+- **Symptom:** the E2E's Steps 10-11 fail. Step 10 asserts the report markdown contains each configured issue **name** and each **group name**; Step 11 asserts the same of `findings`. Measured against the completed run:
+  - report md (3130 chars): contains all five issue ids (`iss_1`..`iss_5`) — **no issue names, no group names at all**.
+  - findings: contain the group names (`Members of the public`, `Organised opponents`, `Group 4`, …) and issue ids — **no issue names**.
+- **Why this is a genuine fork rather than an obvious bug:** the product's own documentation says the id-based, row-counted shape is intentional.
+  - `docs/KNOWN_LIMITS.md:37-42` — *"The counted report is deterministic on purpose. It counts recorded rows (decisions #18/#22/#24): stance landings, turning points, clusters, citations, influencers, top posts."* Stakeholder groups are **not** in that list.
+  - `docs/M1_REPORT.md:66` refers to issues as `iss_1`, `iss_2` — the id idiom is the project's own.
+- **Counter-argument:** the Phase-1 requirement (quoted in D010) is *"Every issue and group must survive: … → findings → report → export."* Groups reaching neither the report nor its structured JSON is a literal failure of that sentence; and the report names agents (`@persona_04`) and clusters while labelling the issues themselves `iss_3`, which is inconsistent in a human-facing markdown report.
+- **Two ways forward — both change something the operator owns, so neither was taken unilaterally:**
+  1. **Change the product (recommended).** Label issues by their configured name with the id retained (`**Congestion charge** (iss_1): mean stance …`) and add a `## Stakeholder groups` section from `agents.stakeholder_group` / the brief. Nothing in the spec changes and no assertion is touched — which keeps this sprint free of any test softening.
+  2. **Change the spec's probes.** Assert issue **ids** in the report (the product already satisfies this) and group names in `findings` (already satisfied), matching the documented contract. Strictly less coverage of the user's *edits*, but consistent with `KNOWN_LIMITS #9`.
+- **Not acted on.** Awaiting the operator's choice.

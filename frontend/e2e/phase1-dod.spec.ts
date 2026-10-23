@@ -14,7 +14,9 @@ async function getSource(request: APIRequestContext, sourceId: string) {
   return await r.json();
 }
 
-test.describe.configure({ retries: 0 });
+// The flow drives a real simulation run (seeding + rounds), which outlasts the
+// 30s default test timeout; the assertions themselves are unchanged.
+test.describe.configure({ retries: 0, timeout: 300000 });
 
 test.describe('Phase 1 DoD: Wizard Flow', () => {
 
@@ -112,20 +114,24 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     expect(groupAfter.sort()).toEqual(groupBefore.sort());
 
     // === Step 4: Edit issue field, navigate away, back ===
+    // The group count above left the Stakeholder Groups tab active, and issue
+    // rows render only on the Issues tab. Scope the row by its own panel rather
+    // than by DOM depth: span.t-id sits below the panel's header row, which
+    // holds the move/duplicate/remove buttons and no inputs.
+    await page.getByRole('button', { name: /Issues \(\d+\)/ }).click();
     const firstIssueUuid = issAfter[0];
-    if (firstIssueUuid) {
-        const issueRow = page.locator('span.t-id').filter({ hasText: firstIssueUuid }).locator('..').locator('..');
-        await issueRow.locator('input').first().fill('TEST_EDIT_' + Date.now());
-        await page.keyboard.press('Tab');
-    }
+    const issueRow = page.locator('.panel-2').filter({
+        has: page.locator('span.t-id', { hasText: firstIssueUuid }),
+    });
+    const issueNameInput = issueRow.getByRole('textbox', { name: 'Name', exact: true });
+    await issueNameInput.fill('TEST_EDIT_' + Date.now());
+    await page.keyboard.press('Tab');
 
     await page.getByRole('button', { name: /Set up agents/i }).click();
     await page.getByRole('button', { name: /Back/i }).first().click();
     await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 10000 });
 
-    const issueRowAfter = page.locator('span.t-id').filter({ hasText: firstIssueUuid }).locator('..');
-    const nameInput = issueRowAfter.locator('input').first();
-    const nameValue = await nameInput.inputValue();
+    const nameValue = await issueRow.getByRole('textbox', { name: 'Name', exact: true }).inputValue();
     expect(nameValue).toContain('TEST_EDIT_');
 
     // === Step 5: Next / back / reload again ===
@@ -137,6 +143,8 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 10000 });
 
     const uuidsFinal = await page.locator('span.t-id:has-text("iss_")').allTextContents();
+    // Group rows render only on the Stakeholder Groups tab.
+    await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
     const namesFinal = await page.locator('span.t-id:has-text("Group")').allTextContents();
     const issFinal = uuidsFinal.filter(t => t.startsWith('iss_'));
     const groupFinal = namesFinal.filter(t => t.startsWith('Group'));
@@ -147,7 +155,9 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
 
     // === Step 6: Set agents to 16 ===
     await page.getByRole('button', { name: /Set up agents/i }).click();
-    const agentsSlider = page.getByRole('slider', { name: /Agents/i });
+    // Anchor the name: the writes-per-round slider's accessible name includes a
+    // hint that mentions "agent", so /Agents/i matches two sliders.
+    const agentsSlider = page.getByRole('slider', { name: /^Agents/ });
     await agentsSlider.fill('16');
     await expect(page.getByText(/16 agents/)).toBeVisible({ timeout: 5000 });
     await page.getByRole('button', { name: /Review & launch/i }).click();
