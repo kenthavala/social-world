@@ -36,7 +36,10 @@
 
 9. **The counted report is deterministic on purpose.** It counts recorded rows
    (decisions #18/#22/#24): stance landings, turning points, clusters, citations,
-   influencers, top posts. The only generated text is the optional executive
+   influencers, top posts, and the stakeholder groups seeded into the run. Issues
+   and groups are labelled with the names the operator configured, with the stable
+   `iss_N` id kept beside the name — the labels come from the source's brief, the
+   numbers still count recorded rows. The only generated text is the optional executive
    summary ("essay"), which is stored and rendered separately under an explicit
    "LLM DRAFT — generated, not counted data" label and is deleted when the report
    is regenerated (see #16 and decision #26).

@@ -37,6 +37,7 @@ def build_findings(run_id: str) -> dict:
     rounds: dict[int, dict] = {}
     agent_posts: dict[str, list[str]] = defaultdict(list)
     group_posts: dict[str, int] = defaultdict(int)
+    issue_posts: dict[str, int] = defaultdict(int)
     group_agents: dict[str, set] = defaultdict(set)
     group_post_ids: dict[str, list[str]] = defaultdict(list)
     cites: dict[str, list[str]] = defaultdict(list)
@@ -61,6 +62,8 @@ def build_findings(run_id: str) -> dict:
         group_posts[group] += 1
         group_agents[group].add(p["agent_id"])
         group_post_ids[group].append(p["id"])
+        for iid in (db.uj(p["stance_json"], {}) or {}):
+            issue_posts[iid] += 1
         for cid in db.uj(p["cited_chunk_ids_json"], []) or []:
             cites[cid].append(p["id"])
             page = (chunk_info.get(cid) or {}).get("page_start")
@@ -136,7 +139,35 @@ def build_findings(run_id: str) -> dict:
         })
     changes.sort(key=lambda c: (-abs(c["delta"]), c["agent_id"], c["issue_id"]))
 
+    # The configured issues and groups, under the names the user gave them (the id
+    # stays the key). `posts` counts the posts that recorded a stance on that issue.
+    brief: dict[str, Any] = {}
+    if source_id:
+        src = db.query_one("SELECT brief_json FROM sources WHERE id=?", (source_id,))
+        brief = db.uj(src["brief_json"], {}) if src else {}
+
+    issue_rows: list[dict[str, Any]] = []
+    for i in (brief.get("issues") or []):
+        if i.get("id"):
+            issue_rows.append({"issue_id": i["id"], "name": i.get("name") or i["id"],
+                               "posts": issue_posts.get(i["id"], 0)})
+    known = {r["issue_id"] for r in issue_rows}
+    for iid in sorted(set(issue_posts) - known):
+        issue_rows.append({"issue_id": iid, "name": iid, "posts": issue_posts[iid]})
+
+    # A configured group that received no agents still appears, with zeros — the
+    # finding is built from agents that acted, which would otherwise drop a group
+    # the operator defined as though it had never existed.
+    have = {r["group"] for r in group_rows}
+    for g in (brief.get("stakeholder_groups") or []):
+        if g.get("name") and g["name"] not in have:
+            group_rows.append({"group": g["name"], "posts": 0, "agents": 0,
+                               "agent_ids": [], "post_ids": []})
+    group_rows.sort(key=lambda r: (-r["posts"], r["group"]))
+
     findings: list[dict[str, Any]] = [
+        {"id": "issues", "title": "Issues, and the posts recording a stance on each",
+         "denominator": posts_total, "unit": "posts", "rows": issue_rows},
         {"id": "round_stance", "title": "Posts by round and stance",
          "denominator": posts_total, "unit": "posts", "rows": round_rows},
         {"id": "most_cited", "title": "Most-cited passages",

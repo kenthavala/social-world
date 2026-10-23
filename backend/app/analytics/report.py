@@ -181,6 +181,23 @@ def _source_usage(run_id: str) -> list[dict]:
     return out
 
 
+def _brief_labels(source_id: str | None) -> tuple[dict[str, str], list[str]]:
+    """The user's own names for a source's issues and stakeholder groups.
+
+    Ids remain the stable key everywhere; these are labels so the markdown
+    reads in the operator's terms rather than as `iss_3`.
+    """
+    if not source_id:
+        return {}, []
+    row = db.query_one("SELECT brief_json FROM sources WHERE id=?", (source_id,))
+    brief = db.uj(row["brief_json"], {}) if row else {}
+    issue_names = {(i.get("id") or ""): (i.get("name") or i.get("id") or "")
+                   for i in (brief.get("issues") or []) if i.get("id")}
+    group_names = [g.get("name") for g in (brief.get("stakeholder_groups") or [])
+                   if g.get("name")]
+    return issue_names, group_names
+
+
 def generate_report(run_id: str) -> dict:
     """Build (or rebuild) the report snapshot for a run. Any state allowed."""
     r = db.query_one("SELECT * FROM runs WHERE id=?", (run_id,))
@@ -227,6 +244,16 @@ def generate_report(run_id: str) -> dict:
         if not p.get("live"):  # scenario-authored broadcast (not an injected copy)
             public_events.append({"tick": e["tick"], "payload": p})
 
+    # Stakeholder groups: the configured groups in the user's order, each with the
+    # number of agents actually seeded into it. A configured group that got no
+    # agents still appears, with 0 — that is the point of listing them.
+    issue_names, brief_groups = _brief_labels(r["source_id"])
+    agents_by_group = {(row["g"] or "unassigned"): row["n"] for row in db.query(
+        "SELECT stakeholder_group AS g, COUNT(*) AS n FROM agents"
+        " WHERE run_id=? GROUP BY stakeholder_group", (run_id,))}
+    group_names = brief_groups + sorted(g for g in agents_by_group if g not in brief_groups)
+    groups = [{"name": g, "agents": agents_by_group.get(g, 0)} for g in group_names]
+
     analytics = {
         "agents": n_agents,
         "posts": n_posts,
@@ -245,7 +272,8 @@ def generate_report(run_id: str) -> dict:
     }
 
     md = _report_md(r, cfg, provider_hint, analytics, issue_means, top,
-                    influencers, briefings, shifts, clusters, usage, narratives)
+                    influencers, briefings, shifts, clusters, usage, narratives,
+                    issue_names, groups)
 
     db.execute("INSERT OR REPLACE INTO reports(run_id, created_at, analytics_json,"
                " report_md, report_json) VALUES(?,?,?,?,?)",
@@ -253,7 +281,8 @@ def generate_report(run_id: str) -> dict:
                    "stances_at_last_tick": issue_means, "top_posts": top,
                    "influencers": influencers, "turning_points": shifts,
                    "clusters": [{"size": c["size"], "handles": c["handles"]} for c in clusters],
-                   "source_usage": usage, "narratives": narratives})))
+                   "source_usage": usage, "narratives": narratives,
+                   "issue_names": issue_names, "stakeholder_groups": groups})))
     return {"report_md": md, "available": True, "analytics": analytics, "created_at": now}
 
 
@@ -393,7 +422,9 @@ def _fmt_engagement(nodes: list[dict]) -> str:
 def _report_md(r, cfg: dict, provider_hint: dict, a: dict, issue_means: dict,
                top: list[dict], influencers: list[dict], briefings: list[dict],
                shifts: list[dict] | None = None, clusters: list[dict] | None = None,
-               usage: list[dict] | None = None, narratives: list[dict] | None = None) -> str:
+               usage: list[dict] | None = None, narratives: list[dict] | None = None,
+               issue_names: dict[str, str] | None = None,
+               groups: list[dict] | None = None) -> str:
     started = r["started_at"] or "—"
     finished = r["finished_at"] or "—"
     lines = [
@@ -414,10 +445,23 @@ def _report_md(r, cfg: dict, provider_hint: dict, a: dict, issue_means: dict,
     ]
     if issue_means:
         for iid, v in issue_means.items():
-            lines.append(f"- **{iid}**: mean stance {v:+.2f} — {a['pro_agents']} agents lean "
+            # The user's own name for the issue, with the stable id kept beside it.
+            label = (issue_names or {}).get(iid) or iid
+            tag = f" (`{iid}`)" if label != iid else ""
+            lines.append(f"- **{label}**{tag}: mean stance {v:+.2f} — {a['pro_agents']} agents lean "
                          f"pro, {a['neutral_agents']} neutral, {a['con_agents']} lean con")
     else:
         lines.append("- No completed ticks to read opinion from.")
+    lines += [
+        "",
+        "## Stakeholder groups",
+        "",
+    ]
+    if groups:
+        for g in groups:
+            lines.append(f"- **{g['name']}** — {g['agents']} agents")
+    else:
+        lines.append("- No stakeholder groups recorded.")
     lines += [
         "",
         "## What happened",
