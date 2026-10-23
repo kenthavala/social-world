@@ -89,10 +89,20 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     groups = await page.locator('span.t-id:has-text("Group")').all();
     expect(groups.length).toBe(6);
     const namesBefore = await page.locator('span.t-id:has-text("Group")').allTextContents();
-    const inputGroupNames: string[] = [];
+    // A group row's `span.t-id` is the row's ordinal ("Group 2"), not data — it is
+    // only good for matching rows across a reload. The group's own NAME lives in
+    // its Name field, and that is the value the run's outputs must carry.
+    const inputGroupLabels: string[] = [];
     for (const el of groups) {
       const text = await el.textContent();
-      if (text?.startsWith('Group')) inputGroupNames.push(text.trim());
+      if (text?.startsWith('Group')) inputGroupLabels.push(text.trim());
+    }
+    const groupRows = page.locator('.panel-2').filter({
+      has: page.locator('span.t-id', { hasText: /^Group \d+$/ }),
+    });
+    const inputGroupNames: string[] = [];
+    for (const row of await groupRows.all()) {
+      inputGroupNames.push(await row.getByRole('textbox', { name: 'Name', exact: true }).inputValue());
     }
 
     // === Step 3: Reload mid-wizard ===
@@ -149,7 +159,7 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     const issFinal = uuidsFinal.filter(t => t.startsWith('iss_'));
     const groupFinal = namesFinal.filter(t => t.startsWith('Group'));
     expect(issFinal.sort()).toEqual(inputIssueUuids.sort());
-    expect(groupFinal.sort()).toEqual(inputGroupNames.sort());
+    expect(groupFinal.sort()).toEqual(inputGroupLabels.sort());
     expect(issFinal.length).toBe(5);
     expect(groupFinal.length).toBe(6);
 
