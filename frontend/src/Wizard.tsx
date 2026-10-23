@@ -241,7 +241,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
       );
       try { localStorage.removeItem(DKEY); } catch { /* ignore */ }
       // Launch intent: the run page performs the actual start (seeding can take minutes).
-      try { sessionStorage.setItem("oasis-autostart", run.id); } catch { /* ignore */ }
+      try { sessionStorage.setItem("tsw-autostart", run.id); } catch { /* ignore */ }
       onDone(run.id);
       void run;
     } catch (e) {
