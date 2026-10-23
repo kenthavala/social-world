@@ -1,0 +1,16 @@
+# Normalize all text files to LF in the repository.
+# Windows checkouts were producing CRLF working copies, which made
+# byte-exact tooling (editors, patch/Edit tools) fail to match file contents.
+* text=auto eol=lf
+
+# Source
+*.ts text eol=lf
+*.tsx text eol=lf
+*.py text eol=lf
+
+# Windows scripts must keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary
+*.db binary
