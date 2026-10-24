@@ -271,10 +271,28 @@ def generate_report(run_id: str) -> dict:
         "citation_counts": sum(u["citations"] for u in usage),
     }
 
-    md = _report_md(r, cfg, provider_hint, analytics, issue_means, top,
-                    influencers, briefings, shifts, clusters, usage, narratives,
-                    issue_names, groups)
-
+    # The document renderer produces the professional report from the same counted
+    # rows, enriched with the computed narrative. It never invents a value: every
+    # number it prints comes from this function's counts or from recorded tables.
+    from app.analytics import report_doc
+    from app.analytics.narrative import build_narrative
+    try:
+        narrative = build_narrative(run_id)
+    except Exception:  # noqa: BLE001 — a narrative failure must not lose the report
+        narrative = {}
+    source_row = (db.query_one("SELECT id, filename, pages FROM sources WHERE id=?",
+                               (r["source_id"],)) if r["source_id"] else None)
+    md = report_doc.render(
+        run=dict(r), cfg=cfg, provider=provider_hint, analytics=analytics,
+        issue_means=issue_means, issue_names=issue_names, groups=groups,
+        narrative=narrative, top_posts=top, influencers=influencers, shifts=shifts,
+        clusters=clusters, usage=usage, narratives=narratives, briefings=briefings,
+        scenario=db.uj(r["scenario_json"], {}) or {},
+        source=dict(source_row) if source_row else None,
+        counts={"brief_summary": (db.uj(db.scalar(
+            "SELECT brief_json FROM sources WHERE id=?", (r["source_id"],)) or "{}", {})
+            or {}).get("summary")},
+    )
     db.execute("INSERT OR REPLACE INTO reports(run_id, created_at, analytics_json,"
                " report_md, report_json) VALUES(?,?,?,?,?)",
                (run_id, now, db.j(analytics), md, db.j({
@@ -510,6 +528,26 @@ def _report_md(r, cfg: dict, provider_hint: dict, a: dict, issue_means: dict,
             lines.append(f"- tick {p['tick']} @{p['handle']} ({p['engagement']} interactions):"
                          f" “{p['text']}”")
     lines += [
+        "",
+        "## Quality and validation",
+        "",
+        "- **What this is**: a simulation of plausible responses from modelled agents, grounded "
+        "in the uploaded source. Every number above is counted from this run's database rows.",
+        "- **What this is not**: a prediction of real-world opinion, behaviour or outcomes. "
+        "The realism score in the Quality tab measures configuration quality and internal "
+        "consistency; it is not predictive accuracy.",
+        "- **External validation**: Predictive accuracy has not yet been externally validated. "
+        "No observed dataset is linked to this run, so no accuracy figure is reported.",
+        "",
+        "## Limitations",
+        "",
+        "- Agents are generated personas, not surveyed people. Their responses are plausible "
+        "under the configured rules, not observed.",
+        "- Opinion updates use bounded-confidence heuristics, not parameters fitted to real data.",
+        "- Model-written text is non-deterministic even at a fixed seed; structure is "
+        "reproducible, prose may vary.",
+        "- Findings describe what happened inside this simulation. They do not establish what "
+        "would happen in the world.",
         "",
         "---",
         "",

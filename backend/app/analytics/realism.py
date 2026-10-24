@@ -20,6 +20,117 @@ NOT_CONNECTED = "not_connected"
 _TARGET_CHUNKS = 6          # a source with at least this many cited chunks is well covered
 _NETWORK_DENSITY_TARGET = 0.05
 
+# Actionable guidance per dimension. Each entry says what to change and what that
+# change would make measurable. This turns the panel from a score into a diagnostic;
+# nothing here is a prediction.
+_GUIDANCE: dict[str, dict[str, str]] = {
+    "evidence_coverage": {
+        "improve": "Raise the number of writing agents per round, or choose a source with "
+                   "more distinct passages, so more posts can cite the document.",
+        "requires": "More recorded posts that cite a chunk.",
+    },
+    "evidence_quality": {
+        "improve": "Label the source's passages by authority or relevance, then connect those "
+                   "labels as a validation dataset.",
+        "requires": "A source-quality annotation scheme and a linked dataset.",
+    },
+    "agent_diversity": {
+        "improve": "Add stakeholder groups with different archetypes, or raise the population "
+                   "so more of the configured groups receive agents.",
+        "requires": "More agents or more distinct archetypes recorded.",
+    },
+    "issue_coverage": {
+        "improve": "Run at least one round with posting enabled so every issue receives "
+                   "stance observations.",
+        "requires": "Stance history rows for the missing issues.",
+    },
+    "stakeholder_representation": {
+        "improve": "Raise the agent count to at least the number of configured groups so every "
+                   "group receives one agent.",
+        "requires": "One agent per configured group.",
+    },
+    "population_representation": {
+        "improve": "Set an explicit population weight on every stakeholder group in the wizard.",
+        "requires": "A population_weight on each configured group.",
+    },
+    "persona_grounding": {
+        "improve": "Use a source with more extractable text so each persona has both a belief "
+                   "summary and source chunks.",
+        "requires": "At least one chunk in every agent's knowledge set.",
+    },
+    "behavioural_calibration": {
+        "improve": "Link an observed behavioural dataset (for example a survey panel) and score "
+                   "the update rule against it.",
+        "requires": "Observed behaviour data and a calibration procedure.",
+    },
+    "starting_stance_calibration": {
+        "improve": "Import a survey baseline and set each group's starting stance from it "
+                   "rather than from the brief alone.",
+        "requires": "Baseline survey data per stakeholder group.",
+    },
+    "information_exposure": {
+        "improve": "Persist per-agent feed exposure so the panel can measure who saw what.",
+        "requires": "Exposure event logging in the engine.",
+    },
+    "interaction_realism": {
+        "improve": "Increase rounds or writes per round so agents have more chances to reply.",
+        "requires": "More recorded replies and relationships.",
+    },
+    "network_realism": {
+        "improve": "Adjust follow-graph seeding if the density is far from the target.",
+        "requires": "A density closer to the sparse-graph target.",
+    },
+    "temporal_realism": {
+        "improve": "Let the run complete, or resume it, so all configured rounds are recorded.",
+        "requires": "last_completed_tick equal to the configured tick count.",
+    },
+    "stance_stability": {
+        "improve": "Run more rounds to see whether positions settle or drift.",
+        "requires": "Stance series spanning at least two rounds.",
+    },
+    "event_realism": {
+        "improve": "Add a scheduled intervention in the wizard to test how the population "
+                   "reacts to news.",
+        "requires": "At least one scenario event.",
+    },
+    "provider_reliability": {
+        "improve": "Use a faster or more reliable provider, or raise the timeout in Settings.",
+        "requires": "Fewer failed provider calls in the audit log.",
+    },
+    "generation_quality": {
+        "improve": "Choose a model that returns valid JSON more consistently, or lower the "
+                   "temperature.",
+        "requires": "More successful calls returning machine-valid structure.",
+    },
+    "configuration_completeness": {
+        "improve": "Create runs through the wizard so the manifest is fully populated.",
+        "requires": "All manifest fields recorded.",
+    },
+    "data_completeness": {
+        "improve": "Generate a report after the run so every record layer exists.",
+        "requires": "Agents, posts, stance history, relationships, metrics and a report.",
+    },
+    "replication_stability": {
+        "improve": "Re-run this exact configuration with a different seed and compare the two "
+                   "runs in Compare runs.",
+        "requires": "A second run sharing this setup.",
+    },
+    "sensitivity_analysis": {
+        "improve": "Sweep the key assumptions (weights, influence, activity, exposure, event "
+                   "timing) and compare outcomes.",
+        "requires": "An assumption-sweep harness.",
+    },
+    "historical_validation": {
+        "improve": "Register an observed dataset and link predicted/observed pairs to this run.",
+        "requires": "Rows in validation_datasets and validation_observations.",
+    },
+    "outcome_validation": {
+        "improve": "Link an observed outcome for this scenario, then design an explicit "
+                   "evaluation.",
+        "requires": "An observed outcome dataset and an agreed error metric.",
+    },
+}
+
 
 def _pct(n: float, d: float) -> Optional[int]:
     if d <= 0:
@@ -29,10 +140,14 @@ def _pct(n: float, d: float) -> Optional[int]:
 
 def _dim(id_: str, label: str, group: str, weight: int, status: str,
          score: Optional[int], explanation: str, evidence: dict | None = None) -> dict:
+    guide = _GUIDANCE.get(id_) or {}
     return {
         "id": id_, "label": label, "group": group, "weight": weight,
         "status": status, "score": score, "explanation": explanation,
         "evidence": evidence or {},
+        # What to change, and what would become measurable if you did.
+        "recommendation": guide.get("improve") or "",
+        "requires": guide.get("requires") or "",
     }
 
 
@@ -51,9 +166,19 @@ def _load(run_id: str) -> dict:
     for p in posts:
         p["cited"] = db.uj(p.pop("cited_chunk_ids_json"), []) or []
     chunks = db.query("SELECT id FROM chunks WHERE source_id=?", (src_id,)) if src_id else []
+    calls = [dict(c) for c in db.query(
+        "SELECT task, provider, model, status, parsed_ok, http_status, error FROM llm_calls"
+        " WHERE run_id=?", (run_id,))]
+    # Stance history is the only per-agent, per-issue time series in the database;
+    # it lets stance stability be counted rather than guessed.
+    stance_rows = db.query(
+        "SELECT tick, agent_id, issue_id, value FROM stance_history WHERE run_id=?"
+        " ORDER BY tick, agent_id, issue_id", (run_id,))
     return {
         "run": dict(run), "source": dict(source) if source else None, "brief": brief or {},
         "agents": agents, "posts": posts, "chunk_ids": [c["id"] for c in chunks],
+        "calls": calls,
+        "stance_rows": stance_rows,
         "edges": db.scalar("SELECT COUNT(*) FROM edges WHERE run_id=?", (run_id,)) or 0,
         "events": db.scalar(
             "SELECT COUNT(*) FROM events WHERE run_id=? AND kind IN ('scheduled','news')",
@@ -130,6 +255,39 @@ def compute_realism(run_id: str) -> dict:
         "authority or relevance. Connect a validation dataset to assess it."))
 
     # --- population -------------------------------------------------------
+    if agents:
+        # Agent diversity: how many distinct archetypes and stakeholder groups the
+        # population actually contains, normalised against what was configured.
+        archetypes = {a.get("archetype") or "" for a in agents}
+        archetypes.discard("")
+        agent_groups = {a.get("stakeholder_group") or "" for a in agents}
+        agent_groups.discard("")
+        target_arch = min(len(agents), max(1, len(agent_groups) * 2))
+        arch_score = _pct(len(archetypes), target_arch)
+        dims.append(_dim(
+            "agent_diversity", "Agent diversity", "Population", 10, ASSESSED, arch_score,
+            f"{len(agents)} agents span {len(archetypes)} archetype(s) across "
+            f"{len(agent_groups)} stakeholder group(s). Diversity counts distinct recorded "
+            "archetypes, not personality similarity.",
+            {"agents": len(agents), "archetypes": sorted(archetypes),
+             "groups": sorted(agent_groups), "target_archetypes": target_arch}))
+
+        # Issue coverage: every configured issue should be observable in the record.
+        if issues:
+            stance_issue_ids = {r["issue_id"] for r in data["stance_rows"]}
+            covered = [i["id"] for i in issues if i["id"] in stance_issue_ids]
+            score = _pct(len(covered), len(issues))
+            missing = [i["name"] for i in issues if i["id"] not in stance_issue_ids]
+            dims.append(_dim(
+                "issue_coverage", "Issue coverage", "Population", 10, ASSESSED, score,
+                f"{len(covered)} of {len(issues)} configured issue(s) have recorded stance "
+                "observations."
+                + (f" No stance rows yet for: {', '.join(missing[:5])}." if missing else ""),
+                {"issues": len(issues), "covered": covered, "missing": missing}))
+        else:
+            dims.append(_dim("issue_coverage", "Issue coverage", "Population", 10,
+                             NOT_ASSESSED, None, "No issues configured."))
+
     if groups and agents:
         represented = 0
         for g in groups:
@@ -236,6 +394,44 @@ def compute_realism(run_id: str) -> dict:
         dims.append(_dim("temporal_realism", "Round coverage", "Temporal", 10,
                          NOT_ASSESSED, None, "No round count configured."))
 
+    # Stance stability: how much agents actually moved, counted from stance_history.
+    # Low movement is not automatically "good"; it is reported as a behaviour fact.
+    rows = data["stance_rows"]
+    if rows:
+        by_agent_issue: dict[tuple[str, str], list[float]] = {}
+        for r in rows:
+            by_agent_issue.setdefault((r["agent_id"], r["issue_id"]), []).append(
+                float(r["value"] or 0.0))
+        deltas = []
+        movers = 0
+        for series in by_agent_issue.values():
+            if len(series) < 2:
+                continue
+            span = abs(series[-1] - series[0])
+            deltas.append(span)
+            if span >= 0.2:
+                movers += 1
+        if deltas:
+            avg_span = sum(deltas) / len(deltas)
+            # Stability is high when movement stays modest; an entirely frozen
+            # population would score 100 but is reported alongside the mover count.
+            stability = max(0, min(100, round(100 * (1 - min(1.0, avg_span)))))
+            dims.append(_dim(
+                "stance_stability", "Stance stability", "Temporal", 10, ASSESSED, stability,
+                f"{len(deltas)} agent-issue series; mean start-to-end change {avg_span:.3f} on a "
+                f"-1..1 scale, {movers} series moved 0.2 or more. Stability measures persistence, "
+                "not correctness.",
+                {"series": len(deltas), "mean_span": round(avg_span, 4),
+                 "movers": movers}))
+        else:
+            dims.append(_dim(
+                "stance_stability", "Stance stability", "Temporal", 10, PARTIAL, None,
+                "Stance history exists but no series spans two rounds yet."))
+    else:
+        dims.append(_dim(
+            "stance_stability", "Stance stability", "Temporal", 10, NOT_ASSESSED, None,
+            "No stance history recorded yet."))
+
     if data["events"]:
         dims.append(_dim(
             "event_realism", "Interventions", "Temporal", 5, ASSESSED, 100,
@@ -262,6 +458,55 @@ def compute_realism(run_id: str) -> dict:
         + ("." if all(checks.values()) else " (missing: "
            + ", ".join(k for k, v in checks.items() if not v) + ")."),
         checks))
+
+    # --- provider and generation health -----------------------------------
+    # These come from the llm_calls audit log, so a failed call is visible rather
+    # than hidden. They describe the transport, not the accuracy of the content.
+    calls = data["calls"]
+    if calls:
+        attempted = len(calls)
+        failed = sum(1 for c in calls if (c.get("status") or "") not in ("ok", "cached", "replay"))
+        ok = attempted - failed
+        ok_score = _pct(ok, attempted)
+        dims.append(_dim(
+            "provider_reliability", "Provider reliability", "Configuration", 10, ASSESSED, ok_score,
+            f"{ok} of {attempted} recorded provider call(s) succeeded; {failed} failed. "
+            "This counts transport outcomes, not answer quality.",
+            {"calls": attempted, "ok": ok, "failed": failed,
+             "providers": sorted({c.get("provider") or "" for c in calls if c.get("provider")})}))
+        parsed = sum(1 for c in calls if c.get("parsed_ok"))
+        scored = sum(1 for c in calls if (c.get("status") or "") == "ok")
+        quality = _pct(parsed, scored) if scored else None
+        dims.append(_dim(
+            "generation_quality", "Generation quality", "Configuration", 10,
+            ASSESSED if quality is not None else PARTIAL, quality,
+            f"{parsed} of {scored} successful call(s) returned machine-valid structure; the rest "
+            "fell back to a retry, a fallback model or a template."))
+    else:
+        dims.append(_dim(
+            "provider_reliability", "Provider reliability", "Configuration", 10, NOT_ASSESSED, None,
+            "No provider calls were recorded for this run."))
+        dims.append(_dim(
+            "generation_quality", "Generation quality", "Configuration", 10, NOT_ASSESSED, None,
+            "No provider calls were recorded for this run."))
+
+    # --- data completeness -------------------------------------------------
+    # Presence, not quality: does each layer of the record actually exist?
+    layer_checks = {
+        "agents": bool(agents),
+        "posts": bool(posts),
+        "stance_history": bool(data["stance_rows"]),
+        "relationships": data["edges"] > 0,
+        "metrics": (db.scalar("SELECT COUNT(*) FROM metrics WHERE run_id=?", (run_id,)) or 0) > 0,
+        "report": (db.scalar("SELECT COUNT(*) FROM reports WHERE run_id=?", (run_id,)) or 0) > 0,
+    }
+    dims.append(_dim(
+        "data_completeness", "Data completeness", "Configuration", 5, ASSESSED,
+        _pct(sum(layer_checks.values()), len(layer_checks)),
+        "Recorded layers: " + ", ".join(k for k, v in layer_checks.items() if v)
+        + ("." if all(layer_checks.values()) else " (empty: "
+           + ", ".join(k for k, v in layer_checks.items() if not v) + ")."),
+        layer_checks))
 
     # --- robustness -------------------------------------------------------
     comparable = db.scalar(
@@ -331,6 +576,47 @@ def compute_realism(run_id: str) -> dict:
                         "predictive accuracy for real-world opinion or behaviour."),
         }
 
+    # --- diagnostic summary: what is strong, what to fix, what cannot be assessed
+    strong = [d for d in assessed if (d["score"] or 0) >= 75]
+    weak = [d for d in assessed if (d["score"] or 0) < 60]
+    unassessed = [d for d in dims if d["score"] is None]
+
+    # Recommendations ordered by how much fixing them would move the score: weight
+    # first, then how far the dimension is from a good score.
+    ranked = sorted(
+        weak,
+        key=lambda d: (-(d["weight"] * (75 - (d["score"] or 0))), d["id"]),
+    )
+    actions = []
+    for d in ranked[:5]:
+        if not d["recommendation"]:
+            continue
+        actions.append({
+            "dimension": d["id"],
+            "label": d["label"],
+            "group": d["group"],
+            "score": d["score"],
+            "recommendation": d["recommendation"],
+            "requires": d["requires"],
+        })
+
+    summary = {
+        "strong": [{"id": d["id"], "label": d["label"], "score": d["score"]} for d in strong],
+        "attention": [{"id": d["id"], "label": d["label"], "score": d["score"]} for d in weak],
+        "not_assessed": [{"id": d["id"], "label": d["label"], "status": d["status"],
+                          "requires": d["requires"]} for d in unassessed],
+        "actions": actions,
+        "headline": (
+            "This run is well configured and internally consistent."
+            if overall_score is not None and overall_score >= 80 else
+            "This run is usable but has gaps worth closing before relying on it."
+            if overall_score is not None and overall_score >= 55 else
+            "This run is exploratory: treat its findings as hypotheses, not results."
+            if overall_score is not None else
+            "Not enough recorded data to assess this run."
+        ),
+    }
+
     return {
         "run_id": run_id,
         "overall": {
@@ -342,6 +628,7 @@ def compute_realism(run_id: str) -> dict:
                        "listed and excluded. This is a configuration-quality score, not "
                        "predictive accuracy."),
         },
+        "summary": summary,
         "predictive_accuracy": accuracy,
         "validation": {
             "connected": bool(observations),

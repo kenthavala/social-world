@@ -13,3 +13,8 @@ __pycache__/
 frontend/tsconfig.tsbuildinfo
 frontend/playwright-report/
 frontend/test-results/
+
+# Local demo/QA artefacts (regenerate with tools/seed_demo.py + visual_qa.mjs)
+.demo-data/
+frontend/docs/screenshots/
+report_sample.md

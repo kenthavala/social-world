@@ -12,6 +12,22 @@ from app.config import ENV_FILE, ROOT, config, get_api_key, provider_key_env
 from app.errors import AppError
 from app.llm.presets import PRESETS
 
+_DEFAULT_ENV_FILE = ENV_FILE
+
+
+def _env_file():
+    """Resolve .env at call time.
+
+    Follow the live config singleton, so a redirected data directory (tests, or a
+    relocated install) never writes back to the original checkout. A caller that
+    deliberately rebinds this module's ENV_FILE keeps that choice.
+    """
+    from pathlib import Path
+    from app import config as config_mod
+    if ENV_FILE is not None and Path(ENV_FILE) != Path(_DEFAULT_ENV_FILE):
+        return Path(ENV_FILE)
+    return Path(config_mod.ENV_FILE)
+
 router = APIRouter(prefix="/api")
 
 _KEY_VARS = [p.key_env for p in PRESETS.values() if p.key_env]
@@ -92,9 +108,10 @@ def put_settings(body: SettingsIn) -> dict:
 
 
 def _write_keys_to_env(keys: dict[str, str]) -> None:
+    env_file = _env_file()
     lines: list[str] = []
-    if ENV_FILE.exists():
-        lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+    if env_file.exists():
+        lines = env_file.read_text(encoding="utf-8").splitlines()
     for var, value in keys.items():
         if var not in _KEY_VARS or not value:
             continue
@@ -108,7 +125,8 @@ def _write_keys_to_env(keys: dict[str, str]) -> None:
         if not replaced:
             lines.append(f"{var}={value}")
     try:
-        ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError as e:
         raise AppError(f"could not write .env: {e}", component="api", stage="settings")
     # record when each key was set (metadata only; never the key itself)

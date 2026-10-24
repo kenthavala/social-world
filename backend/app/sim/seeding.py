@@ -30,6 +30,48 @@ def _stance_mix(config: dict) -> dict[str, float]:
     return dict(zip(keys, [v / total for v in vals]))
 
 
+def _allocate_slots(weights: list[float], total: int) -> list[int]:
+    """Apportion `total` agent slots across groups so none is silently dropped.
+
+    Pure weighted sampling with replacement can leave small groups with zero agents
+    even when there are more agents than groups — the operator configured the group,
+    so it must be represented. This uses largest-remainder apportionment with a
+    floor of one agent per group, which is deterministic for a given weight vector.
+    When there are fewer agents than groups the heaviest groups are chosen and the
+    caller reports the ones that could not be represented instead of hiding it.
+    """
+    m = len(weights)
+    if m == 0 or total <= 0:
+        return [0] * m
+    if total <= m:
+        # Cannot cover every group: represent the heaviest, ties broken by order.
+        order = sorted(range(m), key=lambda j: (-weights[j], j))[:total]
+        alloc = [0] * m
+        for j in order:
+            alloc[j] = 1
+        return alloc
+    total_w = sum(weights) or float(m)
+    remaining = total - m
+    raw = [remaining * w / total_w for w in weights]
+    floors = [int(x) for x in raw]
+    alloc = [1 + f for f in floors]
+    left = remaining - sum(floors)
+    order = sorted(range(m), key=lambda j: (-(raw[j] - floors[j]), j))
+    for j in order[:max(0, left)]:
+        alloc[j] += 1
+    return alloc
+
+
+def group_coverage(brief: dict, agents_n: int) -> tuple[list[str], list[str]]:
+    """Return (represented, unrepresented) configured group names for a population size."""
+    groups = brief.get("stakeholder_groups") or []
+    names = [g.get("name") or "" for g in groups]
+    weights = [GROUP_WEIGHTS.get(g.get("size_hint", "medium"), 1.0) for g in groups]
+    alloc = _allocate_slots(weights, agents_n)
+    return ([n for n, a in zip(names, alloc) if a > 0],
+            [n for n, a in zip(names, alloc) if a == 0])
+
+
 def assign_targets(agents_n: int, brief: dict, config: dict, rng: random.Random) -> list[dict]:
     """Deterministically assign each slot a stakeholder group and per-issue target stance."""
     issues: list[dict] = brief.get("issues") or []
@@ -38,24 +80,21 @@ def assign_targets(agents_n: int, brief: dict, config: dict, rng: random.Random)
         groups = [{"name": "Members of the public", "description": "Ordinary readers",
                    "size_hint": "large", "stance_by_issue": {i["id"]: 0.0 for i in issues}}]
     mix = _stance_mix(config)
-    n_by_size: dict[str, int] = {}
     total_agents = agents_n
     slots: list[dict] = []
-    # slot -> group by weighted sampling with replacement (size_hint biases share)
     weights = [GROUP_WEIGHTS.get(g.get("size_hint", "medium"), 1.0) for g in groups]
-    group_names = [g["name"] for g in groups]
-    for i in range(total_agents):
-        cum = rng.random() * sum(weights)
-        acc = 0.0
-        gi = 0
-        for j, w in enumerate(weights):
-            acc += w
-            if cum <= acc:
-                gi = j
-                break
+    # Guarantee representation: apportion slots so every configured group receives at
+    # least one agent whenever the population is large enough.
+    alloc = _allocate_slots(weights, total_agents)
+    scheduled: list[int] = []
+    for gi, count in enumerate(alloc):
+        scheduled.extend([gi] * count)
+    # Shuffle so group identity is not correlated with agent ordinal, while the
+    # counts above stay exact. The seed makes the shuffle reproducible.
+    rng.shuffle(scheduled)
+    for i, gi in enumerate(scheduled):
         group = groups[gi]
         gname = group["name"]
-        n_by_size[gname] = n_by_size.get(gname, 0) + 1
         targets: dict[str, float] = {}
         for issue in issues:
             iid = issue["id"]

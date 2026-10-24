@@ -205,6 +205,10 @@ def list_chunks(source_id: str, limit: int = 1000, offset: int = 0) -> dict:
 
 class BriefIn(BaseModel):
     scenario: str = ""
+    # Optional hints: the LLM is free to find more, but the deterministic fallback
+    # honours these counts instead of silently collapsing to 1 issue / 3 groups.
+    max_issues: int = 5
+    max_groups: int = 6
 
 
 @router.post("/sources/{source_id}/brief")
@@ -216,7 +220,11 @@ async def generate_brief(source_id: str, body: BriefIn) -> dict:
         raise AppError("scenario text is required to build the brief",
                        component="api", stage="brief")
     from app.llm.gateway import gateway
-    brief = await brief_mod.build_brief(source_id, body.scenario, gateway)
+    brief = await brief_mod.build_brief(
+        source_id, body.scenario, gateway,
+        max_issues=max(1, min(50, body.max_issues)),
+        max_groups=max(1, min(50, body.max_groups)),
+    )
     db.execute("UPDATE sources SET brief_json=? WHERE id=?", (db.j(brief), source_id))
     return {"brief": brief}
 

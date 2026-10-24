@@ -129,9 +129,56 @@ def _looks_valid(brief: dict) -> bool:
 
 _HARNESS_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
+# Extended issue fields the wizard exposes. They are optional: a brief without them
+# is still valid, but once a user fills one in it must survive a save. Dropping them
+# silently was a data-loss bug — the builder wrote them, the sanitizer erased them.
+_ISSUE_TEXT_FIELDS = (
+    "detailed_context", "geographic_scope", "time_horizon", "current_situation",
+    "proposed_change", "alternative_options", "key_tradeoffs", "evidence_sources",
+    "known_uncertainties", "metrics", "decision_question",
+)
+
+_GROUP_TEXT_FIELDS = (
+    "demographic_characteristics", "geographic_distribution", "economic_characteristics",
+    "incentives", "constraints", "stance_distribution", "behavioural_tendencies",
+)
+
+_GROUP_LIST_FIELDS = ("interests", "priorities", "concerns", "typical_information_sources")
+
+
+def _str_list(value: Any, limit: int = 24) -> list[str]:
+    """Coerce a list-ish field to a bounded list of short strings, preserving order."""
+    if isinstance(value, str):
+        # The builder splits on commas, but an API caller may send one string.
+        value = [p for p in value.split(",")]
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            out.append(text[:80])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _num(value: Any, lo: float, hi: float) -> float | None:
+    """Clamp a numeric field; None when absent or unparseable (never a fake default)."""
+    if value is None or value == "":
+        return None
+    try:
+        return round(max(lo, min(hi, float(value))), 3)
+    except (TypeError, ValueError):
+        return None
+
 
 def _sanitize_brief(raw: Any) -> dict:
-    """Accept dict or text; clamp ids, stances and counts to the schema."""
+    """Accept dict or text; clamp ids, stances and counts to the schema.
+
+    Preserves every field the wizard can edit, including the extended issue and
+    stakeholder-group attributes, so a round-trip through PUT /brief is lossless.
+    """
     if isinstance(raw, str):
         from app.llm.parsing import extract_json
         try:
@@ -147,7 +194,7 @@ def _sanitize_brief(raw: Any) -> dict:
         iid = issue.get("id") or f"iss_{i + 1}"
         if not re.fullmatch(r"iss_[A-Za-z0-9_]+", str(iid)):
             iid = f"iss_{i + 1}"
-        issues.append({
+        item = {
             "id": iid,
             "name": str(issue.get("name") or f"Issue {i + 1}")[:80],
             "question": str(issue.get("question") or issue.get("name") or "")[:300],
@@ -155,7 +202,34 @@ def _sanitize_brief(raw: Any) -> dict:
             "con_label": str(issue.get("con_label") or "Opposes")[:40],
             "evidence_chunk_ids": [c for c in (issue.get("evidence_chunk_ids") or [])
                                    if isinstance(c, str)],
-        })
+        }
+        # Optional builder fields: carry through when present, omit when empty so a
+        # generated brief stays compact and the UI can rely on the key being absent.
+        cat = issue.get("category")
+        if cat:
+            item["category"] = str(cat)[:60]
+        for field in _ISSUE_TEXT_FIELDS:
+            text = issue.get(field)
+            if isinstance(text, str) and text.strip():
+                item[field] = text[:2000]
+        keywords = _str_list(issue.get("keywords"))
+        if keywords:
+            item["keywords"] = keywords
+        for side in ("potential_arguments", "potential_counterarguments"):
+            vals = _str_list(issue.get(side))
+            if vals:
+                item[side] = vals
+        related = _str_list(issue.get("related_groups"))
+        if related:
+            item["related_groups"] = related
+        importance = _num(issue.get("importance"), 0.0, 1.0)
+        if importance is not None:
+            item["importance"] = importance
+        for side in ("initial_stance", "stance_range_min", "stance_range_max"):
+            v = _num(issue.get(side), -1.0, 1.0)
+            if v is not None:
+                item[side] = v
+        issues.append(item)
     groups = []
     for g in (raw.get("stakeholder_groups") or []):
         if not isinstance(g, dict):
@@ -167,12 +241,45 @@ def _sanitize_brief(raw: Any) -> dict:
                 stance[issue["id"]] = round(max(-1.0, min(1.0, float(v))), 3)
             except (TypeError, ValueError):
                 stance[issue["id"]] = 0.0
-        groups.append({
+        group = {
             "name": str(g.get("name") or "Unnamed group")[:60],
             "description": str(g.get("description") or "")[:200],
             "size_hint": g.get("size_hint") if g.get("size_hint") in ("small", "medium", "large") else "medium",
             "stance_by_issue": stance,
-        })
+        }
+        weight = _num(g.get("population_weight"), 0.0, 100.0)
+        if weight is not None:
+            group["population_weight"] = weight
+        for field in _GROUP_TEXT_FIELDS:
+            text = g.get(field)
+            if isinstance(text, str) and text.strip():
+                group[field] = text[:2000]
+        for field in _GROUP_LIST_FIELDS:
+            vals = _str_list(g.get(field))
+            if vals:
+                group[field] = vals
+        initial = _num(g.get("initial_stance"), -1.0, 1.0)
+        if initial is not None:
+            group["initial_stance"] = initial
+        for field, hi in (("influence", 10.0), ("sensitivity", 10.0),
+                          ("institutional_power", 10.0)):
+            v = _num(g.get(field), 0.0, hi)
+            if v is not None:
+                group[field] = v
+        trust = _num(g.get("trust_level"), 0.0, 1.0)
+        if trust is not None:
+            group["trust_level"] = trust
+        exposure = _num(g.get("exposure"), 0.0, 1.0)
+        if exposure is not None:
+            group["exposure"] = exposure
+        knowledge = _num(g.get("knowledge_level"), 0.0, 1.0)
+        if knowledge is not None:
+            group["knowledge_level"] = knowledge
+        for side in ("likely_arguments", "likely_objections"):
+            vals = _str_list(g.get(side))
+            if vals:
+                group[side] = vals
+        groups.append(group)
     claims = []
     for c in (raw.get("key_claims") or [])[:10]:
         if isinstance(c, dict) and c.get("text"):
@@ -193,7 +300,7 @@ def _sanitize_brief(raw: Any) -> dict:
              "size_hint": "large", "stance_by_issue": {(issues[0]["id"] if issues else "iss_1"): 0.0}}],
         "key_claims": claims,
         "entities": [str(e)[:40] for e in (raw.get("entities") or [])[:10]],
-        "fallback": False,
+        "fallback": bool(raw.get("fallback")),
         "generated_by": meta,
     }
 

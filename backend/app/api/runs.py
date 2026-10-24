@@ -300,19 +300,57 @@ def inject_event(run_id: str, body: InjectIn) -> dict:
 
 # --- read endpoints -----------------------------------------------------------
 
+def _group_attributes(run_id: str) -> dict[str, dict]:
+    """Configured attributes per stakeholder group, keyed by group name.
+
+    Influence and institutional power live on the brief rather than on the agent
+    row, so the read side joins them in instead of duplicating mutable values into
+    the agents table.
+    """
+    run = db.query_one("SELECT source_id FROM runs WHERE id=?", (run_id,))
+    if not run or not run["source_id"]:
+        return {}
+    brief = db.uj(db.scalar("SELECT brief_json FROM sources WHERE id=?",
+                            (run["source_id"],)) or "{}", {}) or {}
+    out: dict[str, dict] = {}
+    for g in (brief.get("stakeholder_groups") or []):
+        name = g.get("name")
+        if not name:
+            continue
+        out[name] = {
+            "influence": g.get("influence"),
+            "institutional_power": g.get("institutional_power"),
+            "trust_level": g.get("trust_level"),
+            "exposure": g.get("exposure"),
+            "knowledge_level": g.get("knowledge_level"),
+            "description": g.get("description") or "",
+            "interests": g.get("interests") or [],
+            "concerns": g.get("concerns") or [],
+        }
+    return out
+
+
 @router.get("/runs/{run_id}/agents")
 def list_agents(run_id: str) -> dict:
     rows = db.query("SELECT * FROM agents WHERE run_id=? ORDER BY id", (run_id,))
+    attrs = _group_attributes(run_id)
     out = []
     for r in rows:
         stances = db.uj(r["stances_json"], {}) or {}
         traits = db.uj(r["traits_json"], {}) or {}
         state = db.uj(r["state_json"], {}) or {}
+        meta = attrs.get(r["stakeholder_group"] or "", {})
         out.append({
             "id": r["id"], "handle": r["handle"], "name": r["name"], "bio": r["bio"],
             "archetype": r["archetype"], "group": r["stakeholder_group"],
             "stances": stances, "traits": traits, "state": state,
             "belief_summary": r["belief_summary"], "knowledge": db.uj(r["knowledge_json"], []),
+            # configured group attributes (read-side join; not stored per agent)
+            "influence": meta.get("influence"),
+            "institutional_power": meta.get("institutional_power"),
+            "trust_level": meta.get("trust_level"),
+            "group_description": meta.get("description") or "",
+            "concerns": meta.get("concerns") or [],
         })
     return {"agents": out}
 
@@ -399,6 +437,16 @@ def list_posts(run_id: str, agent: Optional[str] = None, kind: Optional[str] = N
                       "model": p["model"], "provider": p["provider"],
                       "via_fallback": p["via_fallback"]})
     return {"posts": posts, "count": len(posts), "total": total}
+
+
+@router.get("/runs/{run_id}/narrative")
+def get_narrative(run_id: str) -> dict:
+    """Plain-language findings computed from counted rows (no model call)."""
+    from app.analytics.narrative import build_narrative
+    try:
+        return build_narrative(run_id)
+    except ValueError:
+        raise AppError("run not found", component="api", stage="narrative", status_code=404)
 
 
 @router.get("/runs/{run_id}/realism")

@@ -389,6 +389,7 @@ async def seed_run(run_id: str, gateway) -> int:
     agents: list[dict] = []
     batch_size = 5
     used_handles: set[str] = set()
+    used_names: dict[str, int] = {}
     batches = [slots[i:i + batch_size] for i in range(0, n, batch_size)]
     fallback_count = 0
     for bi, batch in enumerate(batches):
@@ -413,6 +414,17 @@ async def seed_run(run_id: str, gateway) -> int:
             if agent["handle"] in used_handles:
                 agent["handle"] = f"{agent['handle'][:14]}{slot['ordinal']}"
             used_handles.add(agent["handle"])
+            # De-duplicate display names too: a model may return the same name for
+            # several personas, and two agents with identical names are confusing in
+            # the roster even though their handles differ.
+            base_name = agent["name"]
+            if base_name in used_names:
+                n = used_names[base_name] + 1
+                used_names[base_name] = n
+                agent["name"] = f"{base_name} ({n})"
+            else:
+                used_names[base_name] = 1
+            used_names.setdefault(agent["name"], 1)
             # knowledge: 2-4 chunks via BM25 on interests
             src_id = row["source_id"]
             known = knowledge_for(src_id, agent["interests"], rng, target=2 + (j % 3))
@@ -422,6 +434,18 @@ async def seed_run(run_id: str, gateway) -> int:
             agents.append(agent)
     edges = seeding.initial_edges(agents, rng)
     persist_agents(run_id, agents, edges)
+    # Never let a configured stakeholder group vanish without saying so: if the
+    # population is too small to cover every group, record which ones were left out
+    # as a visible warning instead of silently dropping them.
+    represented, missing = seeding.group_coverage(brief, n)
+    if missing:
+        emit(run_id, "warning", {
+            "label": "stakeholder groups not represented",
+            "groups": missing,
+            "message": (f"{len(missing)} configured stakeholder group(s) received no agent "
+                        f"because the population ({n}) is smaller than the group count "
+                        f"({len(represented) + len(missing)}). Raise the agent count to include them."),
+        })
     # A stop/pause requested while personas were generating must win: never flip an
     # interrupted run back to 'ready' behind the user's back.
     current = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
