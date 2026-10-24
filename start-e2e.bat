@@ -28,6 +28,16 @@ if not exist "%E2E_DATA%" (
 )
 set OASIS_DATA_DIR=%E2E_DATA%
 
+REM Pin the provider to mock inside the run data dir. data/settings.json outranks
+REM LLM_PROVIDER, so a provider saved by an earlier (manual) session would otherwise
+REM leak into the suite: real keys, real 401s and runs that pause instead of passing.
+REM Written with char 34 so the command line needs no nested quotes; UTF-8 without BOM.
+powershell -NoProfile -Command "$q=[char]34; $p=Join-Path $env:OASIS_DATA_DIR 'settings.json'; [IO.File]::WriteAllText($p, '{'+$q+'llm_provider'+$q+':'+$q+'mock'+$q+'}')"
+if errorlevel 1 (
+  echo [start-e2e] ABORT: could not pin the provider to mock in "%E2E_DATA%".
+  exit /b 1
+)
+
 REM Backend on 127.0.0.1:8000 with a clean temp data dir
 cd backend
 start "TSW-backend" /B ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
