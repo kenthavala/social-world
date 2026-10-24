@@ -16,7 +16,7 @@ type Filter = "all" | "pro" | "neu" | "con";
 const PER_TICK_CAP = 12;
 
 export default function LiveTab({ run, posts, runId, connected, onError, bumpKey,
-  selectedTick, onSelectRound, initialChunkId, initialPostId, onCiteRoute }: {
+  selectedTick, onSelectRound, initialChunkId, initialPostId, onCiteRoute, onOpenFinding }: {
   run: RunDetail;
   posts: Post[];
   runId: string;
@@ -28,6 +28,8 @@ export default function LiveTab({ run, posts, runId, connected, onError, bumpKey
   initialChunkId?: string;
   initialPostId?: string;
   onCiteRoute?: (chunkId: string | null, postId: string | null) => void;
+  /** Jump from a cited passage to the finding that cites it (chunk → finding). */
+  onOpenFinding?: (findingId: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [follow, setFollow] = useState(true);
@@ -301,6 +303,7 @@ export default function LiveTab({ run, posts, runId, connected, onError, bumpKey
           post={cite.post}
           onClose={closeCite}
           onError={onError}
+          onOpenFinding={onOpenFinding}
         />
       )}
     </div>
@@ -490,8 +493,11 @@ function PostCard({ p, newest, onCite, allPosts }: {
   const parent = p.parent_id ? allPosts.find((x) => x.id === p.parent_id) : null;
 
   return (
-    <article className={`post ${newest ? "enter-a" : ""}`} aria-label={`Post by ${p.name ?? p.handle ?? p.agent_id}`}>
-      <a className={`av ${avCls}`} href="#" onClick={(e) => e.preventDefault()} aria-label={p.name ?? "agent"} title={p.name ?? undefined}>
+    <article className={`post ${newest ? "enter-a" : ""}`} aria-label={`Post by ${p.name ?? p.handle ?? p.agent_id}`}
+             data-post-id={p.id}>
+      <a className={`av ${avCls}`} href="#" onClick={(e) => e.preventDefault()}
+         aria-label={`${p.name ?? "agent"} — ${initials(p.name, p.handle)}`}
+         title={p.name ?? undefined}>
         {initials(p.name, p.handle)}
       </a>
       <div className="min-w-0">
@@ -551,7 +557,7 @@ function CiteChip({ chunkId, post, onOpen }: { chunkId: string; post: Post; onOp
     <button
       className={`cite ${info && info.page == null && info.text == null ? "is-missing" : ""}`}
       onClick={() => onOpen(chunkId, post)}
-      aria-label={`Source ${chunkId}${pageLabel ? `, ${pageLabel}` : ""}`}
+      title={`Source ${chunkId}${pageLabel ? `, ${pageLabel}` : ""}`}
     >
       <FileText className="ic-xs" aria-hidden />
       {pageLabel && <><span className="cite-p">{pageLabel}</span><span className="cite-sep">·</span></>}
@@ -677,19 +683,37 @@ function LiveRail({ run, posts, runId, connected, onError, bumpKey }: {
 
 // ------------------------------------------------------------------ evidence drawer
 
-function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError }: {
+function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError, onOpenFinding }: {
   run: RunDetail;
   posts: Post[];
   chunkId: string;
   post: Post;
   onClose: () => void;
   onError: (e: unknown) => void;
+  onOpenFinding?: (findingId: string) => void;
 }) {
   const [info, setInfo] = useState(chunkInfo(chunkId));
   const [doc, setDoc] = useState<{ filename: string; pages: number } | null>(null);
   const [copied, setCopied] = useState(false);
+  // Which computed findings cite this passage. Loaded lazily: the drawer is also
+  // opened from a post that was never linked to a finding.
+  const [findingLinks, setFindingLinks] = useState<
+    { id: string; headline: string }[] | null>(null);
   const ref = useRef<HTMLElement>(null);
   useFocusTrap(ref, onClose);
+
+  useEffect(() => {
+    let live = true;
+    api.getNarrative(run.id)
+      .then((n) => {
+        if (!live) return;
+        setFindingLinks((n.key_findings ?? [])
+          .filter((f) => (f.evidence ?? []).some((e) => e.chunk_id === chunkId))
+          .map((f) => ({ id: f.id, headline: f.headline })));
+      })
+      .catch(() => { if (live) setFindingLinks([]); });
+    return () => { live = false; };
+  }, [run.id, chunkId]);
 
   useEffect(() => {
     if (!run.source_id) return;
@@ -814,6 +838,33 @@ function EvidenceDrawer({ run, posts, chunkId, post, onClose, onError }: {
                   </li>
                 ))}
                 {others.length > 8 && <li className="t-meta pt-1.5">+ {others.length - 8} more</li>}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="eyebrow">Findings that cite this passage</span>
+              <span className="t-meta mono">{findingLinks === null ? "…" : findingLinks.length}</span>
+            </div>
+            {findingLinks === null ? (
+              <span className="t-meta">Looking up the computed findings…</span>
+            ) : findingLinks.length === 0 ? (
+              <span className="t-meta">
+                No computed finding cites this passage. A finding is linked here only when its
+                counted evidence includes this chunk.
+              </span>
+            ) : (
+              <ul className="m-0 list-none p-0">
+                {findingLinks.map((f) => (
+                  <li key={f.id}>
+                    <button className="list-row w-full text-left" style={{ padding: "8px 0", gap: 10 }}
+                            onClick={() => onOpenFinding?.(f.id)}>
+                      <span className="min-w-0 flex-1 truncate" style={{ fontSize: 13 }}>{f.headline}</span>
+                      <span className="t-id">Open finding</span>
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
           </div>

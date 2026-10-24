@@ -27,6 +27,10 @@ type Selection =
 
 const stanceColor = (v: number) =>
   v > 0.15 ? "#2EBBA8" : v < -0.15 ? "#F0883A" : "#8D99AA";
+// Canvas fills can be vivid; text must use the accessible -fg tokens, which are
+// tuned per theme (the raw stance hexes fail 4.5:1 on the light background).
+const stanceTextColor = (v: number) =>
+  v > 0.15 ? "var(--pro-fg)" : v < -0.15 ? "var(--con-fg)" : "var(--fg-2)";
 const NODE_TEXT = "rgba(128,137,148,0.95)";
 const LINK_COLOR = "rgba(141,153,170,0.45)";
 
@@ -252,9 +256,11 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
   }
 
   function pick(id: string) {
-    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    // Ticking is a comparison gesture: keep the list visible so a second agent can
+    // be ticked. The list offers an explicit "Compare" control once two are chosen.
+    const next = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
+    setPicked(next);
     setSel({ kind: "agent", id });
-    setPanel("detail");
   }
 
   if (!graph) return <Spinner label="Building connections…" />;
@@ -523,6 +529,7 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
                 picked={picked}
                 selected={sel}
                 onPick={pick}
+                onCompare={() => setPanel("detail")}
                 onGroup={(name) => { setSel({ kind: "group", name }); setPanel("detail"); }}
               />
             ) : (
@@ -543,16 +550,25 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
   );
 }
 
-function EntityList({ agents, groups, picked, selected, onPick, onGroup }: {
+function EntityList({ agents, groups, picked, selected, onPick, onGroup, onCompare }: {
   agents: NetNode[];
   groups: { name: string; members: string[] }[];
   picked: string[];
   selected: Selection;
   onPick: (id: string) => void;
   onGroup: (name: string) => void;
+  onCompare: () => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
+      {picked.length > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="t-meta">{picked.length} agents ticked</span>
+          <button className="btn btn-primary btn-sm" onClick={onCompare}>
+            Compare {picked.length} selected
+          </button>
+        </div>
+      )}
       <div>
         <div className="eyebrow mb-2">Stakeholder groups ({groups.length})</div>
         <div className="flex flex-col gap-1">
@@ -583,7 +599,7 @@ function EntityList({ agents, groups, picked, selected, onPick, onGroup }: {
                        aria-label={`Select ${a.handle ?? a.id}`} />
                 <span className="min-w-0 flex-1 truncate">@{a.handle ?? a.id}</span>
                 <span className="t-meta truncate" style={{ maxWidth: 90 }}>{a.group}</span>
-                <span className="mono flex-none" style={{ fontSize: 11, color: stanceColor(a.mean_stance) }}>
+                <span className="mono flex-none" style={{ fontSize: 11, color: stanceTextColor(a.mean_stance) }}>
                   {a.mean_stance.toFixed(2)}
                 </span>
               </label>
@@ -609,7 +625,9 @@ function DetailPanel({ sel, agent, group, edge, nodes, edges, pickedAgents, roun
   onSelectEdge: (src: string, dst: string) => void;
   onPick: (id: string) => void;
 }) {
-  if (pickedAgents.length > 1) {
+  // Comparison is an agent mode: an explicit group or edge selection takes
+  // precedence, so clicking a group never shows a stale comparison table.
+  if (pickedAgents.length > 1 && sel?.kind === "agent") {
     const meanStance = pickedAgents.reduce((s, a) => s + a.mean_stance, 0) / pickedAgents.length;
     const groups = [...new Set(pickedAgents.map((a) => a.group))];
     return (
@@ -628,7 +646,7 @@ function DetailPanel({ sel, agent, group, edge, nodes, edges, pickedAgents, roun
               <tr key={a.id}>
                 <td className="truncate">@{a.handle ?? a.id}</td>
                 <td className="truncate">{a.group}</td>
-                <td className="r mono" style={{ color: stanceColor(a.mean_stance) }}>{a.mean_stance.toFixed(2)}</td>
+                <td className="r mono" style={{ color: stanceTextColor(a.mean_stance) }}>{a.mean_stance.toFixed(2)}</td>
                 <td className="r mono">{a.degree}</td>
               </tr>
             ))}
@@ -661,7 +679,7 @@ function DetailPanel({ sel, agent, group, edge, nodes, edges, pickedAgents, roun
           <p className="t-meta mono">@{agent.handle ?? agent.id}</p>
           <dl className="kv mt-2" style={{ gridTemplateColumns: "96px minmax(0,1fr)", fontSize: 12.5 }}>
             <dt>Group</dt><dd>{agent.group}</dd>
-            <dt>Stance</dt><dd className="mono" style={{ color: stanceColor(agent.mean_stance) }}>
+            <dt>Stance</dt><dd className="mono" style={{ color: stanceTextColor(agent.mean_stance) }}>
               {agent.mean_stance.toFixed(2)}</dd>
             <dt>Connections</dt><dd className="mono">{edges.length}</dd>
             <dt>Archetype</dt><dd>{agent.archetype ?? "—"}</dd>
@@ -766,7 +784,7 @@ function DetailPanel({ sel, agent, group, edge, nodes, edges, pickedAgents, roun
               <button key={m.id} className="list-row" style={{ padding: "5px 8px" }}
                       onClick={() => onSelectAgent(m.id)}>
                 <span className="min-w-0 flex-1 truncate">@{m.handle ?? m.id}</span>
-                <span className="mono" style={{ fontSize: 11, color: stanceColor(m.mean_stance) }}>
+                <span className="mono" style={{ fontSize: 11, color: stanceTextColor(m.mean_stance) }}>
                   {m.mean_stance.toFixed(2)}
                 </span>
               </button>
@@ -823,7 +841,8 @@ function Matrix({ groups, edges, groupOf }: {
   const count = (a: string, b: string) =>
     edges.filter((e) => groupOf.get(e.src) === a && groupOf.get(e.dst) === b).length;
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" tabIndex={0} role="group"
+         aria-label="Group-to-group relationships — scrollable table">
       <table className="tbl" style={{ minWidth: Math.max(420, groups.length * 78 + 160) }}>
         <thead>
           <tr>

@@ -101,6 +101,7 @@ export default function QualityTab({ run, runId, onError }: QualityTabProps) {
   const accuracy = data.predictive_accuracy;
   const validation = data.validation;
   const summary = data.summary;
+  const mechanisms = data.mechanisms ?? [];
 
   const toggleGroup = (group: string) => {
     setExpanded((prev) => ({ ...prev, [group]: !prev[group] }));
@@ -118,6 +119,14 @@ export default function QualityTab({ run, runId, onError }: QualityTabProps) {
           <span className="t-meta">Configuration quality — NOT predictive accuracy</span>
         </div>
         <div className="panel-body grid gap-4 md:grid-cols-[1fr_320px]">
+          {overall.mock_provider && (
+            <div className="md:col-span-2 panel-2 p-4 flex flex-col gap-1"
+                 role="status"
+                 style={{ borderLeft: "4px solid var(--warn-fg)" }}>
+              <p className="t-h3">Mock-provider run — headline capped at {overall.cap}/100</p>
+              <p className="t-meta">{overall.note}</p>
+            </div>
+          )}
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-4 p-4" style={{ background: "var(--bg-1)", borderRadius: "var(--r-2)" }}>
               <div className="flex flex-col items-center" style={{ minWidth: 80 }}>
@@ -273,6 +282,33 @@ export default function QualityTab({ run, runId, onError }: QualityTabProps) {
           </p>
         </div>
       </section>
+
+      {/* --- Behaviour mechanisms: inputs, calculation, limits --- */}
+      {mechanisms.length > 0 && (
+        <section className="panel" aria-labelledby="mechanisms-h">
+          <div className="panel-head">
+            <h2 id="mechanisms-h" className="t-h2">How this simulation behaves</h2>
+            <span className="t-meta">Documented mechanisms, not fitted predictions</span>
+          </div>
+          <div className="panel-body flex flex-col gap-3">
+            {mechanisms.map((m) => (
+              <div key={m.id} className="panel-2 p-4 flex flex-col gap-1.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="t-h3">{m.name}</h3>
+                  <span className={`status ${m.status === "active" || m.status === "assessed" ? "status-assessed" : "status-not-assessed"}`}>
+                    <span className="dot" />
+                    {m.status === "active" ? "Active" : m.status === "assessed" ? `Assessed${m.score != null ? ` · ${m.score}/100` : ""}` : "Not assessed"}
+                  </span>
+                </div>
+                <p className="t-body fg-2"><strong>Inputs.</strong> {m.inputs}</p>
+                <p className="t-body fg-2"><strong>Calculation.</strong> {m.calculation}</p>
+                <p className="t-body fg-2"><strong>Why.</strong> {m.why}</p>
+                <p className="t-meta"><strong>Limits.</strong> {m.limitations}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* --- Dimension Details --- */}
       {DIMENSION_GROUPS.map((group) => {

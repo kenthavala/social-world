@@ -40,10 +40,13 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
   const [playing, setPlaying] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [interveneOpen, setInterveneOpen] = useState(false);
+  // A finding to scroll to after arriving from a cited passage in the Feed.
+  const [focusFinding, setFocusFinding] = useState<string | null>(null);
   const bumpRef = useRef(0);
 
   const changeTab = (t: RunTabKey) => {
     setTab(t);
+    if (t !== "analysis") setFocusFinding(null);
     try { sessionStorage.setItem(TAB_STORE, t); } catch { /* ignore */ }
   };
 
@@ -413,16 +416,18 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
             </dl>
           </div>
 
-          <nav className="run-tabs tabs -mx-4 px-2 md:-mx-7 md:px-4" aria-label="Run views">
-            {RUN_TABS.map((t) => (
-              <button key={t.key} onClick={() => changeTab(t.key)}
-                      className={`tab ${tab === t.key ? "is-selected" : ""}`}
-                      aria-current={tab === t.key ? "page" : undefined}>
-                {t.key === "live" && isActive ? "Live" : t.label}
-                {t.key === "agents" && agentCount > 0 && <span className="count">{agentCount}</span>}
-              </button>
-            ))}
-          </nav>
+          {!isMobile && (
+            <nav className="run-tabs tabs -mx-4 px-2 md:-mx-7 md:px-4" aria-label="Run views">
+              {RUN_TABS.map((t) => (
+                <button key={t.key} onClick={() => changeTab(t.key)}
+                        className={`tab ${tab === t.key ? "is-selected" : ""}`}
+                        aria-current={tab === t.key ? "page" : undefined}>
+                  {t.key === "live" && isActive ? "Live" : t.label}
+                  {t.key === "agents" && agentCount > 0 && <span className="count">{agentCount}</span>}
+                </button>
+              ))}
+            </nav>
+          )}
         </div>
       </div>
 
@@ -440,7 +445,12 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
                        name: "run", runId,
                        sourceId: chunk ?? undefined,
                        postId: post ?? undefined,
-                     })} />
+                     })}
+                     onOpenFinding={(id) => {
+                       changeTab("analysis");
+                       setFocusFinding(id);
+                       navigate({ name: "run", runId });
+                     }} />
           )}
           {tab === "agents" && (
             <div className="h-full overflow-y-auto px-4 py-4 md:px-7">
@@ -457,7 +467,12 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
           {tab === "analysis" && (
             <div className="h-full overflow-y-auto px-4 py-4 md:px-7">
               <AnalysisTab run={run} posts={posts} runId={runId} bumpKey={bump}
-                           onError={onError} />
+                           onError={onError}
+                           focusFinding={focusFinding}
+                           onOpenChunk={(chunkId) => {
+                             changeTab("live");
+                             navigate({ name: "run", runId, sourceId: chunkId });
+                           }} />
             </div>
           )}
           {tab === "quality" && (

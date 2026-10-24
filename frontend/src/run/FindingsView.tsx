@@ -3,13 +3,13 @@
 // The prose here is derived from counted rows by app/analytics/narrative.py — no
 // model wrote it — so every sentence is traceable to a number in the database. The
 // page answers the reader's questions first and shows the supporting numbers second.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Search, ShieldCheck } from "lucide-react";
 import type { NarrativeIssue, NarrativeResponse, NarrativeStakeholder } from "../types";
 
 const STRENGTH_STYLE: Record<string, { label: string; color: string }> = {
   strong: { label: "Strong evidence", color: "var(--pro-fg)" },
-  moderate: { label: "Moderate evidence", color: "var(--accent)" },
+  moderate: { label: "Moderate evidence", color: "var(--accent-fg)" },
   indicative: { label: "Indicative only", color: "var(--warn-fg)" },
 };
 
@@ -51,10 +51,28 @@ const ANSWER_META: { key: keyof NarrativeResponse["answers"]; title: string; acc
   { key: "watch", title: "What to pay attention to" },
 ];
 
-export default function FindingsView({ data }: { data: NarrativeResponse }) {
+export default function FindingsView({ data, onOpenChunk, focusFinding }: {
+  data: NarrativeResponse;
+  /** Open the source passage behind an evidence entry (document ← chunk). */
+  onOpenChunk?: (chunkId: string) => void;
+  /** A finding id to scroll to and highlight, set when arriving from a passage. */
+  focusFinding?: string | null;
+}) {
   const [issueQuery, setIssueQuery] = useState("");
   const [openIssue, setOpenIssue] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
+
+  // Arriving from the evidence drawer (chunk → finding): bring the finding into view.
+  useEffect(() => {
+    if (!focusFinding) return;
+    const el = document.getElementById(`finding-${focusFinding}`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.setAttribute("data-focused", "true");
+      const t = window.setTimeout(() => el.removeAttribute("data-focused"), 2400);
+      return () => window.clearTimeout(t);
+    }
+  }, [focusFinding]);
 
   const issues = useMemo(() => {
     const q = issueQuery.trim().toLowerCase();
@@ -117,7 +135,8 @@ export default function FindingsView({ data }: { data: NarrativeResponse }) {
             <span className="t-meta">Ordered by how much of the record they explain</span>
           </div>
           {data.key_findings.map((f, i) => (
-            <article key={f.id} className="panel">
+            <article key={f.id} id={`finding-${f.id}`} className="panel"
+                     style={{ scrollMarginTop: 120 }}>
               <div className="panel-body flex flex-col gap-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <h4 className="t-h3 flex items-baseline gap-2">
@@ -174,6 +193,13 @@ export default function FindingsView({ data }: { data: NarrativeResponse }) {
                             )}
                             {e.heading && <span className="t-meta truncate">{e.heading}</span>}
                             <span className="t-meta ml-auto">{e.citations} citation(s)</span>
+                            {onOpenChunk && (
+                              <button className="btn btn-ghost btn-sm"
+                                      onClick={() => onOpenChunk(e.chunk_id)}
+                                      aria-label={`Open source passage ${e.chunk_id}`}>
+                                Open passage
+                              </button>
+                            )}
                           </div>
                           <p className="t-meta mt-1">{e.excerpt}…</p>
                         </li>

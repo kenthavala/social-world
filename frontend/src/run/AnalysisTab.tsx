@@ -81,12 +81,16 @@ function ExportLinks({ runId }: { runId: string }) {
   );
 }
 
-export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
+export default function AnalysisTab({ run, posts, runId, bumpKey, onError, onOpenChunk, focusFinding }: {
   run: RunDetail;
   posts: Post[];
   runId: string;
   bumpKey: number;
   onError: (e: unknown) => void;
+  /** Open the passage behind a finding's evidence in the Feed's source drawer. */
+  onOpenChunk?: (chunkId: string) => void;
+  /** Finding to scroll to, set when arriving from a passage. */
+  focusFinding?: string | null;
 }) {
   const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof api.getMetrics>> | null>(null);
   const [report, setReport] = useState<string | null>(null);
@@ -185,7 +189,7 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
     <div className="flex flex-col gap-6">
       {/* The briefing: computed answers first, supporting numbers below. */}
       {narrative ? (
-        <FindingsView data={narrative} />
+        <FindingsView data={narrative} onOpenChunk={onOpenChunk} focusFinding={focusFinding} />
       ) : (
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-col gap-1.5">

@@ -202,7 +202,8 @@ export const getNarrative = (id: string) =>
 export const getRealism = (id: string) =>
   call<{
     run_id: string;
-    overall: { score: number | null; label: string; assessed_dimensions: number; total_dimensions: number; method: string };
+    overall: { score: number | null; label: string; assessed_dimensions: number; total_dimensions: number; method: string;
+      provider?: string | null; mock_provider?: boolean; score_capped?: boolean; cap?: number | null; note?: string | null };
     summary: {
       headline: string;
       strong: { id: string; label: string; score: number | null }[];
@@ -213,6 +214,10 @@ export const getRealism = (id: string) =>
         recommendation: string; requires: string;
       }[];
     };
+    mechanisms: {
+      id: string; name: string; status: string; score: number | null;
+      inputs: string; calculation: string; why: string; limitations: string;
+    }[];
     predictive_accuracy: { status: string; label: string; observations: number; message: string };
     validation: { connected: boolean; datasets: number; observations: number; message: string };
     dimensions: {
