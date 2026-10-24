@@ -701,13 +701,35 @@ function StepBrief({ mode, sourceId, name, setName, scenario, setScenario, brief
     setEdit({ ...edit, stakeholder_groups: edit.stakeholder_groups.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
   }
 
+  // Issue ids are positional (iss_1..iss_N) and every stakeholder group stores
+  // its positions keyed by those ids; seeding resolves stances by id. Renumbering
+  // the ids without remapping would silently attach each group's stance to a
+  // different issue. `fromIdx[k]` is the old index of the issue landing at
+  // position k (-1 for a newly created one), so a stance follows its issue.
+  function commitIssues(next: WorldBrief["issues"], fromIdx: number[]) {
+    if (!edit) return;
+    const old = edit.issues;
+    const issues = next.map((iss, k) => ({ ...iss, id: `iss_${k + 1}` }));
+    const groups = edit.stakeholder_groups.map((g) => {
+      const prev = g.stance_by_issue || {};
+      const stance: Record<string, number> = {};
+      issues.forEach((iss, k) => {
+        const oi = fromIdx[k];
+        const oldId = oi >= 0 && oi < old.length ? old[oi].id : null;
+        // Only carry a position that was actually recorded for that issue; a
+        // new issue stays without one instead of inheriting a neighbour's.
+        if (oldId && oldId in prev) stance[iss.id] = prev[oldId];
+      });
+      return { ...g, stance_by_issue: stance };
+    });
+    setEdit({ ...edit, issues, stakeholder_groups: groups });
+  }
+
   function addIssue() {
     if (!edit) return;
-    const newId = `iss_${edit.issues.length + 1}`;
-    setEdit({
-      ...edit,
-      issues: [...edit.issues, {
-        id: newId,
+    commitIssues(
+      [...edit.issues, {
+        id: `iss_${edit.issues.length + 1}`,
         name: "New Issue",
         question: "",
         pro_label: "Supports",
@@ -725,32 +747,36 @@ function StepBrief({ mode, sourceId, name, setName, scenario, setScenario, brief
         known_uncertainties: "",
         metrics: "",
         decision_question: "",
-      }]
-    });
+      }],
+      [...edit.issues.map((_, j) => j), -1],
+    );
   }
 
   function removeIssue(i: number) {
     if (!edit) return;
-    setEdit({ ...edit, issues: edit.issues.filter((_, j) => j !== i).map((iss, idx) => ({ ...iss, id: `iss_${idx + 1}` })) });
+    const order = edit.issues.map((_, j) => j).filter((j) => j !== i);
+    commitIssues(order.map((j) => edit.issues[j]), order);
   }
 
   function duplicateIssue(i: number) {
     if (!edit) return;
     const iss = edit.issues[i];
-    setEdit({
-      ...edit,
-      issues: [...edit.issues.slice(0, i + 1), { ...iss, id: `iss_${edit.issues.length + 1}`, name: iss.name + " (copy)" }, ...edit.issues.slice(i + 1)]
-        .map((is, idx) => ({ ...is, id: `iss_${idx + 1}` }))
-    });
+    const order = edit.issues.map((_, j) => j);
+    commitIssues(
+      [...edit.issues.slice(0, i + 1),
+       { ...iss, name: iss.name + " (copy)" },
+       ...edit.issues.slice(i + 1)],
+      [...order.slice(0, i + 1), -1, ...order.slice(i + 1)],
+    );
   }
 
   function moveIssue(i: number, direction: "up" | "down") {
     if (!edit) return;
-    const issues = [...edit.issues];
+    const order = edit.issues.map((_, j) => j);
     const target = i + (direction === "up" ? -1 : 1);
-    if (target < 0 || target >= issues.length) return;
-    [issues[i], issues[target]] = [issues[target], issues[i]];
-    setEdit({ ...edit, issues: issues.map((iss, idx) => ({ ...iss, id: `iss_${idx + 1}` })) });
+    if (target < 0 || target >= order.length) return;
+    [order[i], order[target]] = [order[target], order[i]];
+    commitIssues(order.map((j) => edit.issues[j]), order);
   }
 
   function addGroup() {
@@ -1319,8 +1345,19 @@ function StakeholderGroupBuilder({ edit, brief, populationData, busy, onError, o
                   {issues.map((iss) => (
                     <label key={iss.id} className="field">
                       <span className="label">{iss.name} ({iss.id})</span>
-                      <input className="input" type="number" step="0.1" min="-1" max="1" value={g.stance_by_issue?.[iss.id] ?? 0}
-                        onChange={(e) => onPatch(i, { stance_by_issue: { ...g.stance_by_issue, [iss.id]: Number(e.target.value) } })} />
+                      {/* Blank means "no stated position" — never silently 0. */}
+                      <input className="input" type="number" step="0.1" min="-1" max="1"
+                        placeholder="—"
+                        value={iss.id in (g.stance_by_issue ?? {}) ? g.stance_by_issue[iss.id] : ""}
+                        onChange={(e) => {
+                          const next = { ...g.stance_by_issue };
+                          if (e.target.value === "" || Number.isNaN(Number(e.target.value))) {
+                            delete next[iss.id];
+                          } else {
+                            next[iss.id] = Number(e.target.value);
+                          }
+                          onPatch(i, { stance_by_issue: next });
+                        }} />
                     </label>
                   ))}
                 </div>

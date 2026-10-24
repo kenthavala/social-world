@@ -234,13 +234,19 @@ def _sanitize_brief(raw: Any) -> dict:
     for g in (raw.get("stakeholder_groups") or []):
         if not isinstance(g, dict):
             continue
+        # Only record a position the group actually stated. Defaulting a missing
+        # issue to 0.0 would store "neutral" for a group that never took a
+        # position, which is invented data; seeding applies its own documented
+        # default at use time.
+        stated = g.get("stance_by_issue") or {}
         stance = {}
         for issue in issues:
-            v = (g.get("stance_by_issue") or {}).get(issue["id"], 0.0)
+            if issue["id"] not in stated:
+                continue
             try:
-                stance[issue["id"]] = round(max(-1.0, min(1.0, float(v))), 3)
+                stance[issue["id"]] = round(max(-1.0, min(1.0, float(stated[issue["id"]]))), 3)
             except (TypeError, ValueError):
-                stance[issue["id"]] = 0.0
+                continue
         group = {
             "name": str(g.get("name") or "Unnamed group")[:60],
             "description": str(g.get("description") or "")[:200],
