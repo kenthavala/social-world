@@ -6,6 +6,7 @@
  * test.describe.configure timeout set to 600s per block.
  */
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { normaliseGroups, normaliseIssues } from './wizard-counts';
 
 test.describe.configure({ retries: 0, timeout: 600000 });
 
@@ -23,50 +24,38 @@ async function setupM2Run(page: Page, request: APIRequestContext): Promise<strin
   await fileInput.waitFor({ state: 'attached' });
   await fileInput.setInputFiles('e2e/fixtures/sample_source.txt');
 
-  // Navigate through wizard
-  const draftButton = page.getByRole('button', { name: /Draft the scenario/i });
-  const reviewButton = page.getByRole('button', { name: /Review the scenario/i });
-  await expect(page.getByRole('button', { name: /(?:Draft|Review) the scenario/i }))
-    .toBeVisible({ timeout: 30000 });
+  // Navigate through the 8-step wizard. Rail buttons carry names like
+  // "3 Issues 5 issue(s) defined", so every nav match must be exact.
+  const draftNav = page.getByRole('button', { name: 'Draft the scenario', exact: true });
+  const reviewNav = page.getByRole('button', { name: 'Review the scenario', exact: true });
+  await expect(draftNav.or(reviewNav)).toBeVisible({ timeout: 30000 });
 
-  if (await draftButton.isVisible()) {
-    await draftButton.click();
+  if (await draftNav.isVisible()) {
+    await draftNav.click();
     await page.locator('textarea').first().fill('How will residents respond to the new policy?');
-    await page.getByRole('button', { name: /Draft the scenario/i }).click();
+    await page.getByRole('button', { name: 'Draft the brief', exact: true }).click();
   } else {
-    await reviewButton.click();
+    await reviewNav.click();        // a brief already exists: step 1 -> step 2
   }
+  // The brief is ready when the rail shows its defined counts; advance to issues.
+  await expect(page.getByText(/issue\(s\) defined/)).toBeVisible({ timeout: 60000 });
+  await page.getByRole('button', { name: 'Review issues', exact: true }).click();
 
-  // Wait for brief generation
-  await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText(/Stakeholder Groups \(\d+\)/)).toBeVisible({ timeout: 30000 });
+  // Add issues and groups, then normalise: a brief is never truncated, so it
+  // may propose more than the test's target (5 issues, 6 groups).
+  await normaliseIssues(page, 5);
+  // Forward navigation must use the nav button; the rail only jumps backwards
+  // (future steps are disabled, so a rail click here waits forever).
+  await page.getByRole('button', { name: 'Review stakeholders', exact: true }).click();
+  await normaliseGroups(page, 6);
 
-  // Add issues and groups (5 issues, 6 groups)
-  await page.getByRole('button', { name: /Issues \(\d+\)/ }).click();
-  let issues = await page.locator('span.t-id:has-text("iss_")').all();
-  let issuesToAdd = Math.max(0, 5 - issues.length);
-  for (let i = 0; i < issuesToAdd; i++) {
-    await page.getByRole('button', { name: /\+ Add Issue/i }).click();
-    await page.waitForTimeout(300);
-  }
-  await expect(page.locator('span.t-id:has-text("iss_")')).toHaveCount(5);
-
-  await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
-  let groups = await page.locator('span.t-id:has-text("Group")').all();
-  let groupsToAdd = Math.max(0, 6 - groups.length);
-  for (let i = 0; i < groupsToAdd; i++) {
-    await page.getByRole('button', { name: /\+ Add Group/i }).click();
-    await page.waitForTimeout(300);
-  }
-  await expect(page.locator('span.t-id:has-text("Group")')).toHaveCount(6);
-
-  // Set agents and start run
-  await page.getByRole('button', { name: /Set up agents/i }).click();
-  const agentsSlider = page.getByRole('slider', { name: /^Agents/ });
-  await agentsSlider.fill('5');
-  await expect(page.getByText(/5 agents/)).toBeVisible({ timeout: 5000 });
-  await page.getByRole('button', { name: /Review & launch/i }).click();
-  await page.getByRole('button', { name: /Start run/i }).click();
+  // Population, then through Settings and Review to Launch (nav labels exact).
+  await page.getByRole('button', { name: 'Set up the population', exact: true }).click();
+  await page.getByRole('slider', { name: /^Agents/ }).fill('5');
+  await page.getByRole('button', { name: 'Simulation settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue to launch', exact: true }).click();
+  await page.getByRole('button', { name: 'Start run', exact: true }).click();
   await page.waitForURL(/\/run\/run_[a-f0-9]+/, { timeout: 10000 });
   const url = page.url();
   const match = url.match(/\/run\/(run_[a-f0-9]+)/);
@@ -99,7 +88,13 @@ test('M2 UI: Agents tab + drawer opens', async ({ page, request }) => {
   await setupM2Run(page, request);
 
   await page.getByRole('button', { name: /Agents/ }).click();
-  await expect(page.locator('.tab.is-selected:has-text("Agents")')).toBeVisible({ timeout: 10000 });
+  // Two tab navigations exist: the desktop strip (hidden at <=820px) and the
+  // mobile bottom nav. Assert selection in whichever one this viewport shows.
+  const narrow = (page.viewportSize()?.width ?? 1440) <= 820;
+  const selected = narrow
+    ? page.locator('nav[aria-label="Run sections"] button[aria-current="page"]').filter({ hasText: 'Agents' })
+    : page.locator('.tab.is-selected').filter({ hasText: 'Agents' });
+  await expect(selected).toBeVisible({ timeout: 10000 });
   await expect(page.locator('button.chip:has-text("PRO")')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('button.chip:has-text("CON")')).toBeVisible({ timeout: 5000 });
   await expect(page.locator('button.chip:has-text("NEU")')).toBeVisible({ timeout: 5000 });
@@ -146,11 +141,14 @@ test('M2 UI: Connections tab + tick slider moves', async ({ page, request }) => 
 test('M2 UI: Log tab renders', async ({ page, request }) => {
   await setupM2Run(page, request);
 
-  await page.getByRole('button', { name: /Log/ }).click();
-  await expect(page.locator('text=LLM calls').first()).toBeVisible({ timeout: 10000 });
-  await expect(page.locator('table.tbl')).toBeVisible({ timeout: 10000 });
+  // The LLM call log lives in the Run details drawer, not in a tab.
+  await page.getByRole('button', { name: 'Run details' }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toContainText('Run details');
+  await expect(drawer.locator('text=LLM calls').first()).toBeVisible({ timeout: 10000 });
+  await expect(drawer.locator('table.tbl')).toBeVisible({ timeout: 10000 });
 
-  const callRows = page.locator('table.tbl tbody tr');
+  const callRows = drawer.locator('table.tbl tbody tr');
   const rowCount = await callRows.count();
   expect(rowCount).toBeGreaterThan(0);
 });
@@ -159,62 +157,132 @@ test('M2 UI: Log tab renders', async ({ page, request }) => {
  * Test 4: Inject events UI works.
  */
 test('M2 UI: Inject events UI works', async ({ page, request }) => {
-  await setupM2Run(page, request);
+  // Interventions can only be recorded on a controllable run; setupM2Run leaves
+  // a COMPLETED one, where the button is correctly disabled. Use its source to
+  // create a draft run and schedule there.
+  const completedId = await setupM2Run(page, request);
+  const detail = await (await request.get(`/api/runs/${completedId}`)).json();
+  const created = await request.post('/api/runs', {
+    data: {
+      source_id: detail.source_id,
+      name: 'Draft for intervention',
+      scenario_json: { question: 'How will people respond?', events: [] },
+      config: { agents: 6, ticks: 4, writes_per_tick: 2, seed: 424242 },
+    },
+  });
+  expect(created.ok()).toBeTruthy();
+  const draft = await created.json();
+  expect(draft.status).toBe('draft');
 
-  await page.getByRole('button', { name: /Intervene/ }).click();
-  await expect(page.locator('text=Intervene in this world')).toBeVisible({ timeout: 5000 });
+  await page.goto(`/#/run/${draft.id}`);
+  await page.getByRole('button', { name: 'Intervene', exact: true }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toContainText('Intervene in this world');
 
-  await page.locator('textarea[placeholder*="event"]').first().fill('Breaking news: major policy change announced!');
+  await drawer.locator('textarea').first().fill('Breaking news: major policy change announced!');
+  await drawer.getByLabel('Audience').selectOption('all');
+  await drawer.getByLabel(/Deliver at round/).fill('1');
+  await drawer.getByRole('button', { name: /Record intervention/ }).click();
 
-  await page.getByRole('combobox', { name: /audience/i }).first().click();
-  await page.getByRole('option', { name: /all groups/i }).click();
-
-  await page.locator('input[type="number"][placeholder*="tick"]').first().fill('1');
-
-  await page.getByRole('button', { name: /Schedule|Add event/i }).click();
-  await page.waitForTimeout(500);
-
+  // The schedule is persisted server-side and listed immediately.
+  await expect(drawer.getByText(/SCHEDULED/).first()).toBeVisible({ timeout: 10000 });
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 /**
  * Test 5: Model list free filter works.
+ *
+ * The provider is a native <select>, the model field is a text input with a
+ * "List" button, and the free filter is a counted checkbox that replaces the
+ * model list with the free subset. The models endpoint is stubbed so the test
+ * does not depend on a live provider credential (the endpoint's own free_only
+ * derivation is asserted by the backend API test); the UI must still render
+ * exactly the payload it was given, including the explicit empty state.
  */
 test('M2 UI: Model list free filter works', async ({ page, request }) => {
   await setupM2Run(page, request);
 
-  await page.getByRole('button', { name: /Settings/ }).click();
-  await expect(page.locator('text=Settings').first()).toBeVisible({ timeout: 5000 });
+  const models = ['alpha:free', 'beta-large', 'gamma-FREE', 'delta'];
+  const freeOnly = ['alpha:free', 'gamma-FREE'];
+  const stub = (free: string[]) =>
+    page.route('**/api/providers/*/models', async (route) => {
+      const provider = new URL(route.request().url()).pathname.split('/')[3];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ provider, models, free_only: free }),
+      });
+    });
+  await stub(freeOnly);
 
-  await page.getByRole('combobox', { name: /provider/i }).first().click();
-  await page.getByRole('option', { name: /mock/i }).click();
+  await page.goto('http://localhost:5173/#/settings');
+  await expect(page.getByRole('heading', { name: /LLM provider/i })).toBeVisible({ timeout: 10000 });
 
-  await page.getByRole('combobox', { name: /model/i }).first().click();
-  const freeFilter = page.getByRole('checkbox', { name: /free/i });
-  if (await freeFilter.isVisible()) {
-    await freeFilter.click();
-    await page.waitForTimeout(300);
-    await freeFilter.click();
+  await page.getByRole('combobox', { name: /^Provider/ }).selectOption('mock');
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+
+  const modelField = page.locator('.field').filter({ has: page.getByLabel('Model', { exact: true }) });
+  const modelSelect = modelField.locator('select');
+  await expect(modelSelect).toBeVisible({ timeout: 15000 });
+  await expect(modelSelect.locator('option')).toHaveCount(models.length + 1);
+  for (const m of models) {
+    await expect(modelSelect.locator('option', { hasText: m })).toHaveCount(1);
   }
 
-  await page.keyboard.press('Escape');
+  const free = page.getByRole('checkbox', { name: /Free models only/ });
+  await expect(free).toBeVisible();
+  await expect(free).not.toBeChecked();
+  await expect(free).toHaveAccessibleName(
+    new RegExp(`Free models only \\(${freeOnly.length} of ${models.length} listed\\)`),
+  );
+
+  await free.check();
+  await expect(modelSelect.locator('option')).toHaveCount(freeOnly.length + 1);
+  for (const m of freeOnly) {
+    await expect(modelSelect.locator('option', { hasText: m })).toHaveCount(1);
+  }
+  await expect(modelSelect.locator('option', { hasText: 'beta-large' })).toHaveCount(0);
+
+  await free.uncheck();
+  await expect(modelSelect.locator('option')).toHaveCount(models.length + 1);
+
+  // An empty free set must be stated explicitly, never shown as a silent empty list.
+  await page.unroute('**/api/providers/*/models');
+  await stub([]);
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await expect(free).not.toBeChecked();   // re-listing resets the filter
+  await free.check();
+  await expect(modelSelect.locator('option')).toHaveCount(2);
+  await expect(modelSelect.locator('option', { hasText: 'no free models listed' })).toHaveCount(1);
 });
 
 /**
  * Test 6: Fallback provider switch works.
+ *
+ * The fallback is a select, and a change is only real if it survives the save
+ * round trip, so the test reloads and re-reads it.
  */
 test('M2 UI: Fallback provider switch works', async ({ page, request }) => {
   await setupM2Run(page, request);
 
-  await page.getByRole('button', { name: /Settings/ }).click();
-  await expect(page.locator('text=Settings').first()).toBeVisible({ timeout: 5000 });
+  await page.goto('http://localhost:5173/#/settings');
+  await expect(page.getByRole('heading', { name: /LLM provider/i })).toBeVisible({ timeout: 10000 });
 
-  const fallbackSwitch = page.getByRole('switch', { name: /fallback/i });
-  if (await fallbackSwitch.isVisible()) {
-    await fallbackSwitch.click();
-    await page.waitForTimeout(300);
-    await fallbackSwitch.click();
-  }
+  const fallback = page.getByLabel(/^Fallback provider/);
+  const original = await fallback.inputValue();
+  const target = original === 'nvidia_nim' ? 'mock' : 'nvidia_nim';
+  await fallback.selectOption(target);
+  await page.getByRole('button', { name: /^Save/ }).click();
 
-  await page.keyboard.press('Escape');
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await expect(page.getByLabel(/^Fallback provider/)).toHaveValue(target, { timeout: 15000 });
+
+  // Leave the shared settings as they were for the rest of the suite.
+  await page.getByLabel(/^Fallback provider/).selectOption(original);
+  await page.getByRole('button', { name: /^Save/ }).click();
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await expect(page.getByLabel(/^Fallback provider/)).toHaveValue(original, { timeout: 15000 });
 });

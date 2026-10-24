@@ -3,6 +3,7 @@
  * Tests: upload -> issues -> groups -> reload -> edit -> launch -> verify
  */
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { normaliseGroups, normaliseIssues, railStep } from './wizard-counts';
 
 async function getRunDetail(request: APIRequestContext, runId: string) {
   const r = await request.get(`/api/runs/${runId}`);
@@ -25,50 +26,43 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     await page.goto('http://localhost:5173/#/new');
     await page.waitForLoadState('domcontentloaded');
 
-    // === Step 1: Upload sample source ===
+    // === Step 0: Upload the sample source ===
     const fileInput = page.locator('input[type="file"]').first();
     await fileInput.waitFor({ state: 'attached' });
     await fileInput.setInputFiles('e2e/fixtures/sample_source.txt');
 
-    // The source might already exist with a brief (from a previous test run)
-    // Click the appropriate button to proceed to step 2
-    const draftButton = page.getByRole('button', { name: /Draft the scenario/i });
-    const reviewButton = page.getByRole('button', { name: /Review the scenario/i });
+    // === Step 1: Choose the source and reach the question step ===
+    // The wizard is 8 steps; rail buttons carry names like "3 Issues 5 issue(s)
+    // defined", and the nav uses labels such as "Draft the scenario"/"Review
+    // issues". Substring matching collides (the rail's empty-state label is
+    // "Issues Draft the scenario first"), so nav matches here are exact.
+    const draftNav = page.getByRole('button', { name: 'Draft the scenario', exact: true });
+    const reviewNav = page.getByRole('button', { name: 'Review the scenario', exact: true });
+    // The nav's primary button only exists once the upload has settled and the
+    // source is usable (onNext is undefined while busy/extracting).
+    await expect(draftNav.or(reviewNav)).toBeVisible({ timeout: 30000 });
 
-    // Nav renders the primary button only once the upload has settled and the
-    // source is usable (onNext is undefined while busy/extracting), so probe
-    // only after it exists — otherwise we race the upload and take the branch
-    // that never becomes valid on a fresh data dir.
-    await expect(page.getByRole('button', { name: /(?:Draft|Review) the scenario/i }))
-      .toBeVisible({ timeout: 30000 });
-
-    if (await draftButton.isVisible()) {
-        await draftButton.click();
-        // Enter a scenario question on step 2
-        await page.locator('textarea').first().fill('How will residents respond to the new policy?');
-        // Generate the brief on step 2
-        await page.getByRole('button', { name: /Draft the scenario/i }).click();
+    if (await draftNav.isVisible()) {
+      await draftNav.click();
+      // Name + question live on step 2 ("Research question").
+      await page.locator('textarea').first().fill('How will residents respond to the new policy?');
+      // "Draft the brief" generates the brief on step 2.
+      await page.getByRole('button', { name: 'Draft the brief', exact: true }).click();
     } else {
-        await reviewButton.click();
-        // Brief already generated, skip to checking issues
+      await reviewNav.click();        // a brief already exists: step 1 -> step 2
     }
-
-    // Wait for brief generation - issues count should appear
-    await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText(/Stakeholder Groups \(\d+\)/)).toBeVisible({ timeout: 30000 });
+    // The brief is ready when the rail shows its defined counts.
+    await expect(page.getByText(/issue\(s\) defined/)).toBeVisible({ timeout: 60000 });
+    // Advance to the issues step; the "Review issues" nav is enabled once a brief exists.
+    await page.getByRole('button', { name: 'Review issues', exact: true }).click();
 
     // === Step 2: Add 5 issues and 6 groups ===
-    await page.getByRole('button', { name: /Issues \(\d+\)/ }).click();
+    await expect(page.getByText(/Issues — \d+/).first()).toBeVisible({ timeout: 30000 });
 
-    // Add issues until 5 total
-    let issues = await page.locator('span.t-id:has-text("iss_")').all();
-    const issuesToAdd = Math.max(0, 5 - issues.length);
-    for (let i = 0; i < issuesToAdd; i++) {
-      await page.getByRole('button', { name: /\+ Add Issue/i }).click();
-      await page.waitForTimeout(300);
-    }
-    await expect(page.locator('span.t-id:has-text("iss_")')).toHaveCount(5);
-    issues = await page.locator('span.t-id:has-text("iss_")').all();
+    // Normalise to exactly 5 issues: the generated brief is never truncated, so
+    // it may propose more than the target; extras are removed explicitly.
+    await normaliseIssues(page, 5);
+    const issues = await page.locator('span.t-id:has-text("iss_")').all();
     expect(issues.length).toBe(5);
     const uuidsBefore = await page.locator('span.t-id:has-text("iss_")').allTextContents();
     const inputIssueUuids: string[] = [];
@@ -77,16 +71,10 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
       if (text?.startsWith('iss_')) inputIssueUuids.push(text.trim());
     }
 
-    // Add groups until 6 total
-    await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
-    let groups = await page.locator('span.t-id:has-text("Group")').all();
-    const groupsToAdd = Math.max(0, 6 - groups.length);
-    for (let i = 0; i < groupsToAdd; i++) {
-      await page.getByRole('button', { name: /\+ Add Group/i }).click();
-      await page.waitForTimeout(300);
-    }
-    await expect(page.locator('span.t-id:has-text("Group")')).toHaveCount(6);
-    groups = await page.locator('span.t-id:has-text("Group")').all();
+    // Normalise to exactly 6 groups (extras from an untruncated brief are removed).
+    await page.getByRole('button', { name: 'Review stakeholders', exact: true }).click();
+    await normaliseGroups(page, 6);
+    const groups = await page.locator('span.t-id:has-text("Group")').all();
     expect(groups.length).toBe(6);
     const namesBefore = await page.locator('span.t-id:has-text("Group")').allTextContents();
     // A group row's `span.t-id` is the row's ordinal ("Group 2"), not data — it is
@@ -108,11 +96,14 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     // === Step 3: Reload mid-wizard ===
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
-    await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 10000 });
+    // The draft persists its step, so the Stakeholders stage re-opens (that is
+    // where we were), and the rail is the only way back to the previous stage.
+    await expect(page.getByText(/Stakeholder Groups — \d+/).first()).toBeVisible({ timeout: 10000 });
 
-    const uuidsAfterReload = await page.locator('span.t-id:has-text("iss_")').allTextContents();
-    await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
     const namesAfterReload = await page.locator('span.t-id:has-text("Group")').allTextContents();
+    await railStep(page, 'Issues').click();
+    await expect(page.getByText(/Issues — \d+/).first()).toBeVisible({ timeout: 10000 });
+    const uuidsAfterReload = await page.locator('span.t-id:has-text("iss_")').allTextContents();
     const issBefore = uuidsBefore.filter(t => t.startsWith('iss_'));
     const issAfter = uuidsAfterReload.filter(t => t.startsWith('iss_'));
     const groupBefore = namesBefore.filter(t => t.startsWith('Group'));
@@ -124,11 +115,9 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     expect(groupAfter.sort()).toEqual(groupBefore.sort());
 
     // === Step 4: Edit issue field, navigate away, back ===
-    // The group count above left the Stakeholder Groups tab active, and issue
-    // rows render only on the Issues tab. Scope the row by its own panel rather
-    // than by DOM depth: span.t-id sits below the panel's header row, which
+    // Issue rows render only on the Issues stage. Scope the row by its own panel
+    // rather than by DOM depth: span.t-id sits below the panel's header row, which
     // holds the move/duplicate/remove buttons and no inputs.
-    await page.getByRole('button', { name: /Issues \(\d+\)/ }).click();
     const firstIssueUuid = issAfter[0];
     const issueRow = page.locator('.panel-2').filter({
         has: page.locator('span.t-id', { hasText: firstIssueUuid }),
@@ -137,24 +126,27 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     await issueNameInput.fill('TEST_EDIT_' + Date.now());
     await page.keyboard.press('Tab');
 
-    await page.getByRole('button', { name: /Set up agents/i }).click();
-    await page.getByRole('button', { name: /Back/i }).first().click();
-    await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 10000 });
+    // Navigate away FORWARD through the nav button, back through the rail (the
+    // rail only enables steps already visited). The edit must survive both.
+    await page.getByRole('button', { name: 'Review stakeholders', exact: true }).click();
+    await railStep(page, 'Issues').click();
+    await expect(page.getByText(/Issues — \d+/).first()).toBeVisible({ timeout: 10000 });
 
     const nameValue = await issueRow.getByRole('textbox', { name: 'Name', exact: true }).inputValue();
     expect(nameValue).toContain('TEST_EDIT_');
 
-    // === Step 5: Next / back / reload again ===
-    await page.getByRole('button', { name: /Set up agents/i }).click();
-    await page.getByRole('button', { name: /Back/i }).first().click();
-    await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 10000 });
+    // === Step 5: Away / back / reload again ===
+    await page.getByRole('button', { name: 'Review stakeholders', exact: true }).click();
+    await railStep(page, 'Issues').click();
+    await expect(page.getByText(/Issues — \d+/).first()).toBeVisible({ timeout: 10000 });
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
-    await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/Issues — \d+/).first()).toBeVisible({ timeout: 10000 });
 
     const uuidsFinal = await page.locator('span.t-id:has-text("iss_")').allTextContents();
-    // Group rows render only on the Stakeholder Groups tab.
-    await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
+    // Group rows render only on the Stakeholder Groups stage (forward via nav).
+    await page.getByRole('button', { name: 'Review stakeholders', exact: true }).click();
+    await expect(page.getByText(/Stakeholder Groups — \d+/).first()).toBeVisible({ timeout: 10000 });
     const namesFinal = await page.locator('span.t-id:has-text("Group")').allTextContents();
     const issFinal = uuidsFinal.filter(t => t.startsWith('iss_'));
     const groupFinal = namesFinal.filter(t => t.startsWith('Group'));
@@ -163,17 +155,22 @@ test.describe('Phase 1 DoD: Wizard Flow', () => {
     expect(issFinal.length).toBe(5);
     expect(groupFinal.length).toBe(6);
 
-    // === Step 6: Set agents to 16 ===
-    await page.getByRole('button', { name: /Set up agents/i }).click();
+    // === Step 6: 16 agents, then through Settings/Review to Launch ===
+    await page.getByRole('button', { name: 'Set up the population', exact: true }).click();
     // Anchor the name: the writes-per-round slider's accessible name includes a
     // hint that mentions "agent", so /Agents/i matches two sliders.
     const agentsSlider = page.getByRole('slider', { name: /^Agents/ });
     await agentsSlider.fill('16');
-    await expect(page.getByText(/16 agents/)).toBeVisible({ timeout: 5000 });
-    await page.getByRole('button', { name: /Review & launch/i }).click();
+    await expect(agentsSlider).toHaveValue('16');
+
+    // Steps 5 -> 6 -> 7 -> 8 in the 8-step wizard (nav labels are exact).
+    await page.getByRole('button', { name: 'Simulation settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Review', exact: true }).click();
+    await expect(page.getByText(/Pre-launch check/)).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: 'Continue to launch', exact: true }).click();
 
     // === Step 7: Launch run ===
-    await page.getByRole('button', { name: /Start run/i }).click();
+    await page.getByRole('button', { name: 'Start run', exact: true }).click();
     await page.waitForURL(/\/run\/run_[a-f0-9]+/, { timeout: 10000 });
     const url = page.url();
     const match = url.match(/\/run\/(run_[a-f0-9]+)/);

@@ -3,6 +3,7 @@
  * test.describe.configure timeout set to 600s per block.
  */
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { normaliseGroups, normaliseIssues } from './wizard-counts';
 
 test.describe.configure({ retries: 0, timeout: 600000 });
 
@@ -37,50 +38,36 @@ async function setupRun(page: Page, request: APIRequestContext): Promise<string>
   await fileInput.waitFor({ state: 'attached' });
   await fileInput.setInputFiles('e2e/fixtures/sample_source.txt');
 
-  // Navigate through wizard
-  const draftButton = page.getByRole('button', { name: /Draft the scenario/i });
-  const reviewButton = page.getByRole('button', { name: /Review the scenario/i });
-  await expect(page.getByRole('button', { name: /(?:Draft|Review) the scenario/i }))
-    .toBeVisible({ timeout: 30000 });
+  // Navigate through the 8-step wizard. Rail buttons carry names like
+  // "3 Issues 5 issue(s) defined", so every nav match must be exact.
+  const draftNav = page.getByRole('button', { name: 'Draft the scenario', exact: true });
+  const reviewNav = page.getByRole('button', { name: 'Review the scenario', exact: true });
+  await expect(draftNav.or(reviewNav)).toBeVisible({ timeout: 30000 });
 
-  if (await draftButton.isVisible()) {
-    await draftButton.click();
+  if (await draftNav.isVisible()) {
+    await draftNav.click();
     await page.locator('textarea').first().fill('How will residents respond to the new policy?');
-    await page.getByRole('button', { name: /Draft the scenario/i }).click();
+    await page.getByRole('button', { name: 'Draft the brief', exact: true }).click();
   } else {
-    await reviewButton.click();
+    await reviewNav.click();        // a brief already exists: step 1 -> step 2
   }
+  // The brief is ready when the rail shows its defined counts; advance to issues.
+  await expect(page.getByText(/issue\(s\) defined/)).toBeVisible({ timeout: 60000 });
+  await page.getByRole('button', { name: 'Review issues', exact: true }).click();
 
-  // Wait for brief generation
-  await expect(page.getByText(/Issues \(\d+\)/)).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText(/Stakeholder Groups \(\d+\)/)).toBeVisible({ timeout: 30000 });
+  // Normalise to exactly 5 issues / 6 groups (a brief is never truncated).
+  await normaliseIssues(page, 5);
+  // Forward through the nav; the rail only jumps backwards.
+  await page.getByRole('button', { name: 'Review stakeholders', exact: true }).click();
+  await normaliseGroups(page, 6);
 
-  // Add issues and groups (5 issues, 6 groups)
-  await page.getByRole('button', { name: /Issues \(\d+\)/ }).click();
-  let issues = await page.locator('span.t-id:has-text("iss_")').all();
-  let issuesToAdd = Math.max(0, 5 - issues.length);
-  for (let i = 0; i < issuesToAdd; i++) {
-    await page.getByRole('button', { name: /\+ Add Issue/i }).click();
-    await page.waitForTimeout(300);
-  }
-  await expect(page.locator('span.t-id:has-text("iss_")')).toHaveCount(5);
-
-  await page.getByRole('button', { name: /Stakeholder Groups \(\d+\)/ }).click();
-  let groups = await page.locator('span.t-id:has-text("Group")').all();
-  let groupsToAdd = Math.max(0, 6 - groups.length);
-  for (let i = 0; i < groupsToAdd; i++) {
-    await page.getByRole('button', { name: /\+ Add Group/i }).click();
-    await page.waitForTimeout(300);
-  }
-  await expect(page.locator('span.t-id:has-text("Group")')).toHaveCount(6);
-
-  // Set agents and start run
-  await page.getByRole('button', { name: /Set up agents/i }).click();
-  const agentsSlider = page.getByRole('slider', { name: /^Agents/ });
-  await agentsSlider.fill('5');
-  await expect(page.getByText(/5 agents/)).toBeVisible({ timeout: 5000 });
-  await page.getByRole('button', { name: /Review & launch/i }).click();
-  await page.getByRole('button', { name: /Start run/i }).click();
+  // Population, then through Settings and Review to Launch (nav labels exact).
+  await page.getByRole('button', { name: 'Set up the population', exact: true }).click();
+  await page.getByRole('slider', { name: /^Agents/ }).fill('5');
+  await page.getByRole('button', { name: 'Simulation settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue to launch', exact: true }).click();
+  await page.getByRole('button', { name: 'Start run', exact: true }).click();
   await page.waitForURL(/\/run\/run_[a-f0-9]+/, { timeout: 10000 });
   const url = page.url();
   const match = url.match(/\/run\/(run_[a-f0-9]+)/);
@@ -179,7 +166,12 @@ test('Visual QA: Run page - Network tab', async ({ page, request }) => {
 
   await page.goto(`http://localhost:5173/#/run/${runId}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole('button', { name: /Connections/ }).click();
+  // Two run navigations exist: "Run views" (desktop tabs) and "Run sections"
+  // (mobile bottom bar). Resizing does not unmount the mobile bar
+  // synchronously, so an unscoped /Connections/ matches both for a moment.
+  // Scope to the desktop navigation; the click below is a desktop viewport.
+  await page.getByRole('navigation', { name: 'Run views' })
+    .getByRole('button', { name: 'Connections' }).click();
   await page.waitForTimeout(500);
   await page.screenshot({ path: `docs/screenshots/pass1/run_network_1440x900.png`, fullPage: true });
 
@@ -191,15 +183,19 @@ test('Visual QA: Run page - Network tab', async ({ page, request }) => {
 });
 
 /**
- * Test 7: Run page - Log tab.
+ * Test 7: Run page - LLM call log (Run details drawer).
+ *
+ * RUN_TABS is Feed/Agents/Connections/Findings/Quality: there is no Log tab.
+ * The call log renders inside the "Run details" drawer, so the screenshot is
+ * taken with that drawer open and its heading asserted first.
  */
 test('Visual QA: Run page - Log tab', async ({ page, request }) => {
   const runId = await setupRun(page, request);
 
   await page.goto(`http://localhost:5173/#/run/${runId}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole('button', { name: /Log/ }).click();
-  await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Run details' }).click();
+  await expect(page.getByRole('dialog')).toContainText('LLM calls', { timeout: 15000 });
   await page.screenshot({ path: `docs/screenshots/pass1/run_log_1440x900.png`, fullPage: true });
 
   for (const viewport of ['1280x800', '390x844']) {

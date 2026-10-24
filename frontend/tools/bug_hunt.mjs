@@ -31,10 +31,23 @@ try {
   if (await libChip.count()) {
     await libChip.click();
     await page.waitForTimeout(1400);
-    const nextBtn = page.getByRole("button", { name: /(Draft|Review) the scenario/i }).first();
+    // Rail buttons echo the nav's wording in their status text ("Draft the scenario
+    // first"), so match the nav exactly; either variant reaches step 2.
+    const draftNav = page.getByRole("button", { name: "Draft the scenario", exact: true });
+    const reviewNav = page.getByRole("button", { name: "Review the scenario", exact: true });
+    const nextBtn = draftNav.or(reviewNav);
     if (await nextBtn.count()) {
       await nextBtn.click();
       await page.waitForTimeout(1200);
+      // A brief-less source still needs its brief before the name field is
+      // settled, but the name field renders with or without one.
+      if (await draftNav.count()) {
+        const draftBrief = page.getByRole("button", { name: "Draft the brief", exact: true });
+        if (await draftBrief.count()) {
+          await draftBrief.click();
+          await page.waitForTimeout(2500);
+        }
+      }
     }
     const nameInput = page.locator('input[placeholder*="Congestion Charge"]').first();
     if (await nameInput.count()) {
