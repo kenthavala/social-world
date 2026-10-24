@@ -79,3 +79,41 @@ def test_clamps():
     author = {"id": "agent_b"}
     opinion.update_from_post(a, author, _post(value=5.0), ["iss_1"], True, True, False, 1.0)
     assert -1.0 <= a["stances"]["iss_1"]["value"] <= 1.0
+
+
+def test_stance_inertia_factor_is_documented_and_symmetric():
+    assert opinion.INERTIA == 0.5
+    assert opinion.inertia_factor(0.0) == pytest.approx(1.0)
+    assert opinion.inertia_factor(0.5) == pytest.approx(0.75)
+    assert opinion.inertia_factor(1.0) == pytest.approx(0.5)
+    assert opinion.inertia_factor(-1.0) == pytest.approx(0.5)
+    # Monotone in |stance| and never zero (movement is slowed, not frozen).
+    values = [opinion.inertia_factor(x / 10) for x in range(0, 11)]
+    assert values == sorted(values, reverse=True)
+    assert min(values) == pytest.approx(0.5)
+
+
+def test_extreme_stance_moves_less_than_a_centrist():
+    centrist = _agent(stances={"iss_1": {"value": 0.0, "confidence": 0.5}})
+    committed = _agent(stances={"iss_1": {"value": 0.8, "confidence": 0.5}})
+    for a in (centrist, committed):
+        opinion.update_from_post(a, {"id": "agent_b"}, _post(value=1.0), ["iss_1"],
+                                 liked=False, replied=False, backfire_enabled=True,
+                                 edge_weight=0.5)
+    centrist_delta = centrist["stances"]["iss_1"]["value"]
+    committed_delta = committed["stances"]["iss_1"]["value"] - 0.8
+    # delta = RATE * 0.4 * trust(0.5) * (1 - stubbornness) * inertia * (post - current)
+    base = opinion.RATE * 0.4 * (0.5 + 0.5 * 0.5) * (1 - 0.3)
+    assert centrist_delta == pytest.approx(base * 1.0, rel=1e-6)
+    assert committed_delta == pytest.approx(base * opinion.inertia_factor(0.8) * 0.2, abs=5e-5)
+    assert opinion.inertia_factor(0.8) < 1.0
+
+
+def test_backfire_is_not_scaled_by_inertia():
+    a = _agent(stances={"iss_1": {"value": -0.5, "confidence": 0.5}},
+               traits={"tolerance": 0.2, "stubbornness": 0.3})
+    opinion.update_from_post(a, {"id": "agent_b"}, _post(value=0.9), ["iss_1"],
+                             liked=False, replied=False, backfire_enabled=True,
+                             edge_weight=-0.5)
+    # Exact backfire step: -0.03, independent of |current stance|.
+    assert a["stances"]["iss_1"]["value"] == pytest.approx(-0.53)

@@ -434,6 +434,8 @@ def render(
         if overall.get("score") is not None:
             L += [f"**Configuration quality: {overall['score']}/100 — {overall.get('label', '')}.**",
                   "", f"{overall.get('method', '')}", ""]
+            if overall.get("mock_provider"):
+                L += [f"**Mock-provider run.** {overall.get('note') or ''}", ""]
         else:
             L += ["No configuration-quality score could be computed for this run.", ""]
         if assessed:

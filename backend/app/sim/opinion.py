@@ -6,6 +6,19 @@ from typing import Any
 RATE = 0.12
 BACKFIRE_RATE = 0.03
 
+# Stance inertia. A person who already holds an extreme position moves less than one
+# near the middle, even when both see the same post. The step is scaled by
+#   (1 - INERTIA * |current stance|)
+# so the factor is 1.0 at 0 and 0.5 at +/-1 (it never reaches zero). INERTIA is a
+# modelling choice, not an empirically fitted constant; it is symmetric (applies to
+# both directions) and applies only to the bounded-confidence step, not to backfire.
+INERTIA = 0.5
+
+
+def inertia_factor(current: float) -> float:
+    """Documented stance-inertia multiplier for a stance in [-1, 1]."""
+    return 1.0 - INERTIA * min(1.0, abs(float(current)))
+
 
 def _v(stance: Any, issue_id: str) -> float | None:
     if isinstance(stance, dict):
@@ -42,7 +55,8 @@ def update_from_post(agent: dict, author: dict | None, post: dict, issue_ids: li
         tolerance = agent["traits"]["tolerance"]
         gate = tolerance + (1.2 - tolerance) * (1.0 - agent["traits"]["stubbornness"])
         if abs(d) <= gate:
-            delta = RATE * w * trust * (1 - agent["traits"]["stubbornness"]) * d
+            delta = (RATE * w * trust * (1 - agent["traits"]["stubbornness"])
+                     * inertia_factor(cur) * d)
             cur = cur + delta
             conf = clamp(conf + 0.03, 0, 1)
             changed = True

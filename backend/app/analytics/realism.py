@@ -219,6 +219,77 @@ def _group_shares(data: dict) -> tuple[list[dict], Optional[float]]:
     return out, max_dev
 
 
+def _config_key(config_json: str) -> str:
+    """Comparable configuration: everything except the seed (which must differ)."""
+    import json
+    cfg = db.uj(config_json, {}) or {}
+    cfg.pop("seed", None)
+    return json.dumps(cfg, sort_keys=True, default=str)
+
+
+def replication_stability(run_id: str) -> dict | None:
+    """Cross-run stability of the final stance means, counted from stored rows.
+
+    Inputs: runs with the same source_id, the same configuration apart from `seed`,
+    a different seed, and the same number of completed rounds. For each issue the
+    per-run mean stance at that round is compared; spread = max - min (0..2).
+    Stability = 100 * (1 - mean_spread / 2). None when no such run exists.
+    Limitations: two runs are a comparison, not a distribution; a stable result
+    does not make the model correct, only repeatable for this configuration.
+    """
+    run = db.query_one(
+        "SELECT source_id, config_json, seed, last_completed_tick FROM runs WHERE id=?",
+        (run_id,))
+    if run is None or not run["source_id"] or not (run["last_completed_tick"] or 0):
+        return None
+    tick = run["last_completed_tick"]
+    key = _config_key(run["config_json"])
+    peers = []
+    for row in db.query(
+            "SELECT id, config_json, seed, last_completed_tick FROM runs"
+            " WHERE source_id=? AND id<>? AND last_completed_tick=?", 
+            (run["source_id"], run_id, tick)):
+        if row["seed"] == run["seed"]:
+            continue
+        if _config_key(row["config_json"]) != key:
+            continue
+        peers.append(row)
+    if not peers:
+        return None
+
+    def final_means(rid: str) -> dict[str, float]:
+        return {r["issue_id"]: float(r["m"])
+                for r in db.query(
+                    "SELECT issue_id, AVG(value) AS m FROM stance_history"
+                    " WHERE run_id=? AND tick=? GROUP BY issue_id", (rid, tick))}
+
+    series = {run_id: final_means(run_id)}
+    for p in peers:
+        series[p["id"]] = final_means(p["id"])
+    issues: dict[str, dict] = {}
+    spreads: list[float] = []
+    for iid in sorted({iid for means in series.values() for iid in means}):
+        values = {rid: means[iid] for rid, means in series.items() if iid in means}
+        if len(values) < 2:
+            continue
+        spread = round(max(values.values()) - min(values.values()), 4)
+        spreads.append(spread)
+        issues[iid] = {"values": {k: round(v, 4) for k, v in values.items()},
+                       "spread": spread}
+    if not spreads:
+        return None
+    mean_spread = round(sum(spreads) / len(spreads), 4)
+    score = max(0, min(100, round(100 * (1 - mean_spread / 2))))
+    return {
+        "score": score,
+        "runs": [run_id] + [p["id"] for p in peers],
+        "seeds": [run["seed"]] + [p["seed"] for p in peers],
+        "rounds": tick,
+        "mean_spread": mean_spread,
+        "issues": issues,
+    }
+
+
 def compute_realism(run_id: str) -> dict:
     data = _load(run_id)
     run = data["run"]
@@ -509,18 +580,22 @@ def compute_realism(run_id: str) -> dict:
         layer_checks))
 
     # --- robustness -------------------------------------------------------
-    comparable = db.scalar(
-        "SELECT COUNT(*) FROM runs WHERE id<>? AND source_id=? AND config_json=?",
-        (run_id, run["source_id"], run["config_json"])) or 0
-    if comparable >= 2:
+    stability = replication_stability(run_id)
+    if stability is not None:
         dims.append(_dim(
-            "replication_stability", "Replication stability", "Robustness", 10, PARTIAL, None,
-            f"{comparable + 1} runs share this exact setup, but automated cross-run stability "
-            "analysis is not implemented. Compare them manually in Compare runs."))
+            "replication_stability", "Replication stability", "Robustness", 10, ASSESSED,
+            stability["score"],
+            f"{len(stability['runs'])} runs share this source and configuration with different "
+            f"seeds, all completed {stability['rounds']} rounds. Mean spread of the final "
+            f"per-issue mean stance is {stability['mean_spread']} on a 0-2 scale (0 = identical); "
+            "stability = 100 x (1 - spread / 2). This is repeatability for one configuration, "
+            "not accuracy, and two runs are a comparison rather than a distribution.",
+            stability))
     else:
         dims.append(_dim(
             "replication_stability", "Replication stability", "Robustness", 10, NOT_ASSESSED, None,
-            "Only one run exists for this setup. Re-run with a new seed and compare to assess stability."))
+            "No other run shares this source, configuration (apart from seed) and round count. "
+            "Re-run with a new seed and the same settings to assess stability."))
     dims.append(_dim(
         "sensitivity_analysis", "Sensitivity analysis", "Robustness", 5, NOT_ASSESSED, None,
         "Assumption sweeps (weights, influence, activity, exposure, event timing) are not "
@@ -558,6 +633,22 @@ def compute_realism(run_id: str) -> dict:
         label = "Limited configuration"
     else:
         label = "Exploratory configuration"
+
+    # The mock provider exercises the pipeline; its text is not model output. A
+    # configuration-quality headline derived from it would read as if the content had
+    # been produced by a model, so the headline is capped and the run is flagged.
+    provider = str((db.uj(run["provider_json"], {}) or {}).get("name") or "")
+    if not provider:
+        provider = str(db.scalar(
+            "SELECT provider FROM llm_calls WHERE run_id=? AND provider<>'' LIMIT 1",
+            (run_id,)) or "")
+    is_mock = provider.strip().lower() == "mock"
+    mock_cap = 25
+    capped = bool(is_mock and overall_score is not None and overall_score > mock_cap)
+    if is_mock:
+        if overall_score is not None:
+            overall_score = min(overall_score, mock_cap)
+        label = "Exploratory configuration (mock provider)"
 
     if observations:
         accuracy = {
@@ -607,6 +698,9 @@ def compute_realism(run_id: str) -> dict:
                           "requires": d["requires"]} for d in unassessed],
         "actions": actions,
         "headline": (
+            "Mock-provider run: this exercises the pipeline end to end, but its text is not "
+            "model output. The headline is capped and says nothing about simulation quality."
+            if is_mock else
             "This run is well configured and internally consistent."
             if overall_score is not None and overall_score >= 80 else
             "This run is usable but has gaps worth closing before relying on it."
@@ -616,6 +710,43 @@ def compute_realism(run_id: str) -> dict:
             "Not enough recorded data to assess this run."
         ),
     }
+
+    mechanisms = [
+        {
+            "id": "stance_inertia",
+            "name": "Stance inertia",
+            "status": "active",
+            "score": None,
+            "inputs": ("Current stance on the issue (-1..1), the post's stance, the agent's "
+                       "tolerance and stubbornness, edge trust, and whether the agent liked "
+                       "or replied."),
+            "calculation": ("Only when |post - current| is within the tolerance gate: "
+                            "delta = 0.12 x like_weight x trust x (1 - stubbornness) x "
+                            "(1 - 0.5 x |current|) x (post - current). Backfire is a separate "
+                            "branch and is not scaled by inertia."),
+            "why": ("Strongly committed agents move less than centrists when they see the same "
+                    "post, so opinion change is gradual instead of flipping in one round."),
+            "limitations": ("INERTIA = 0.5 is a modelling choice, not fitted to data; it is "
+                            "symmetric, ignores issue importance and applies only to the "
+                            "bounded-confidence branch."),
+        },
+        {
+            "id": "replication_stability",
+            "name": "Replication stability",
+            "status": "assessed" if stability else "not_assessed",
+            "score": stability["score"] if stability else None,
+            "inputs": ("All runs with the same source, the same configuration apart from seed, "
+                       "a different seed, and the same number of completed rounds. Uses the "
+                       "per-issue mean stance at each run's final round."),
+            "calculation": ("spread = max - min of the per-run final means for each issue; "
+                            "score = 100 x (1 - mean spread / 2). A spread of 0 scores 100."),
+            "why": ("Shows whether the recorded outcome depends on the random seed for this "
+                    "configuration."),
+            "limitations": ("Two runs are a comparison, not a distribution; stability does not "
+                            "make the model correct. Runs with different round counts or "
+                            "configurations are not compared."),
+        },
+    ]
 
     return {
         "run_id": run_id,
@@ -627,8 +758,17 @@ def compute_realism(run_id: str) -> dict:
             "method": ("Weighted average of assessed dimensions only. Unassessed dimensions are "
                        "listed and excluded. This is a configuration-quality score, not "
                        "predictive accuracy."),
+            "provider": provider or None,
+            "mock_provider": is_mock,
+            "score_capped": capped,
+            "cap": mock_cap if is_mock else None,
+            "note": (f"Mock provider: the headline is capped at {mock_cap}/100 because no model "
+                     "produced this text. The dimension scores still describe the recorded "
+                     "configuration, but the headline cannot describe simulation quality."
+                     if is_mock else None),
         },
         "summary": summary,
+        "mechanisms": mechanisms,
         "predictive_accuracy": accuracy,
         "validation": {
             "connected": bool(observations),
