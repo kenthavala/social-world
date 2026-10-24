@@ -363,7 +363,7 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
               ) : (
                 <div>
                   {recentDocs.map((d) => (
-                    <a key={d.source_id} className="list-row" href="#/documents" style={{ alignItems: "flex-start" }}>
+                    <a key={d.id ?? d.source_id} className="list-row" href="#/documents" style={{ alignItems: "flex-start" }}>
                       <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ color: "var(--fg-3)", marginTop: 2 }}>
                         <path d="M4 1.5h5.5L13 5v9.5H4z" /><path d="M9.5 1.5V5H13" />
                       </svg>

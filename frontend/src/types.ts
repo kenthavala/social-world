@@ -54,6 +54,10 @@ export interface RunConfig {
 }
 
 export interface SourceStats {
+  // The list endpoint (GET /api/sources) returns `id`; the detail endpoint
+  // (GET /api/sources/{id}) returns `source_id`. Read either via
+  // `d.id ?? d.source_id`.
+  id?: string;
   source_id: string;
   filename: string;
   kind: string;
