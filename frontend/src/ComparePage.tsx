@@ -56,6 +56,23 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
     });
   }, [data]);
 
+  // Per-round stance-mix delta. Backend computes it from the same recorded buckets;
+  // the client derivation is only a fallback for older stored responses.
+  const mixRows = useMemo(() => {
+    if (!data) return [];
+    if (data.diffs.rounds_mix) return data.diffs.rounds_mix;
+    return rounds
+      .filter((r) => r.left.total > 0 || r.right.total > 0)
+      .map((r) => ({
+        tick: r.tick,
+        left: { pro: r.left.pro, neu: r.left.neu, con: r.left.con, total: r.left.total },
+        right: { pro: r.right.pro, neu: r.right.neu, con: r.right.con, total: r.right.total },
+        delta_pro: r.right.pro - r.left.pro,
+        delta_neu: r.right.neu - r.left.neu,
+        delta_con: r.right.con - r.left.con,
+      }));
+  }, [data, rounds]);
+
   if (failed) {
     return (
       <div className="pt-8">
@@ -126,6 +143,62 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
         </div>
       </section>
 
+      <section className="panel mt-4" aria-labelledby="cmp-issues">
+        <div className="panel-head flex-wrap">
+          <h2 id="cmp-issues" className="t-h3">Recorded stance by issue</h2>
+          <span className="t-meta">mean of recorded agent stances, first vs last round</span>
+        </div>
+        <div className="p-4">
+          {(data.diffs.notes?.length ?? 0) > 0 && (
+            <ul className="m-0 mb-2 flex list-none flex-col gap-1 p-0">
+              {data.diffs.notes!.map((n) => (
+                <li key={n} className="t-meta" style={{ color: "var(--fg-2)" }}>· {n}</li>
+              ))}
+            </ul>
+          )}
+          {data.diffs.issues && data.diffs.issues.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="tbl" style={{ minWidth: 720 }}>
+                <thead>
+                  <tr><th>Issue</th><th className="r">Original start → end</th>
+                    <th className="r">Intervention start → end</th>
+                    <th className="r">Difference in movement</th><th className="r">Agents</th></tr>
+                </thead>
+                <tbody>
+                  {data.diffs.issues.map((d) => (
+                    <tr key={d.issue_id}>
+                      <td>
+                        <div className="fg-1">{d.name}</div>
+                        <div className="t-meta" style={{ fontSize: 10.5 }}>
+                          + toward {d.pro_label ?? "the pro side"} · − toward {d.con_label ?? "the con side"}
+                        </div>
+                      </td>
+                      <td className="r mono">{fmt(d.left_start)} → {fmt(d.left_end)}</td>
+                      <td className="r mono">{fmt(d.right_start)} → {fmt(d.right_end)}</td>
+                      <td className="r mono" style={{
+                        fontWeight: Math.abs(d.difference_in_movement) >= 0.05 ? 600 : 400,
+                        color: Math.abs(d.difference_in_movement) < 0.005
+                          ? "var(--fg-3)" : "var(--fg-1)",
+                      }}>
+                        {fmt(d.difference_in_movement)}
+                      </td>
+                      <td className="r mono t-meta">{d.agents_left} · {d.agents_right}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="t-meta mt-2">
+                Stances are recorded by the engine after every round for every agent and every issue.
+                Averages hide individual movement — the agents table shows each recorded path.
+                The simulation does not establish that any intervention caused a stance change.
+              </p>
+            </div>
+          ) : (
+            <p className="t-meta">No comparable per-issue stance rows are recorded for both runs.</p>
+          )}
+        </div>
+      </section>
+
       <section className="panel mt-4" aria-labelledby="cmp-ruler">
         <div className="panel-head flex-wrap">
           <h2 id="cmp-ruler" className="t-h3">Posts per round</h2>
@@ -158,6 +231,59 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
             </div>
           )}
           <p className="t-meta mt-2">Click a round to see the posts behind it.</p>
+        </div>
+      </section>
+
+      <section className="panel mt-4" aria-labelledby="cmp-mix">
+        <div className="panel-head">
+          <h2 id="cmp-mix" className="t-h3">Stance mix of the posts, round by round</h2>
+          <span className="t-meta">original → intervention · and the difference</span>
+        </div>
+        <div className="overflow-x-auto">
+          {mixRows.length === 0 ? (
+            <p className="t-meta p-4">No recorded rounds in either run.</p>
+          ) : (
+            <table className="tbl" style={{ minWidth: 720 }}>
+              <thead>
+                <tr>
+                  <th rowSpan={2} style={{ verticalAlign: "middle" }}>Round</th>
+                  <th colSpan={3} className="r">ORIGINAL — posts tagged supporting / undecided / opposed</th>
+                  <th colSpan={3} className="r">INTERVENTION — posts tagged supporting / undecided / opposed</th>
+                  <th colSpan={3} className="r" style={{ borderLeft: "1px solid var(--line-1)" }}>
+                    INTERVENTION − ORIGINAL
+                  </th>
+                </tr>
+                <tr>
+                  <th className="r">Supports</th><th className="r">Undec.</th><th className="r">Opposed</th>
+                  <th className="r">Supports</th><th className="r">Undec.</th><th className="r">Opposed</th>
+                  <th className="r" style={{ borderLeft: "1px solid var(--line-1)" }}>Supports</th>
+                  <th className="r">Undec.</th><th className="r">Opposed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mixRows.map((m) => (
+                  <tr key={m.tick}>
+                    <td className="mono">{String(m.tick).padStart(2, "0")}</td>
+                    <td className="r mono">{m.left.pro}</td>
+                    <td className="r mono">{m.left.neu}</td>
+                    <td className="r mono">{m.left.con}</td>
+                    <td className="r mono">{m.right.pro}</td>
+                    <td className="r mono">{m.right.neu}</td>
+                    <td className="r mono">{m.right.con}</td>
+                    <td className="r mono" style={{ borderLeft: "1px solid var(--line-1)" }}>
+                      {signed(m.delta_pro)}
+                    </td>
+                    <td className="r mono">{signed(m.delta_neu)}</td>
+                    <td className="r mono">{signed(m.delta_con)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="t-meta mt-3 p-4">
+            Each run's posts in that round are bucketed by the stance snapshot they carry.
+            This counts posts, not agents or outcomes: one agent posting six times moves six rows.
+          </p>
         </div>
       </section>
 
@@ -279,6 +405,14 @@ function citationRows(data: CompareResponse) {
       right: r?.citations ?? 0,
     };
   }).sort((x, y) => (y.left + y.right) - (x.left + x.right));
+}
+
+function fmt(n: number): string {
+  return `${n > 0 ? "+" : ""}${n.toFixed(2)}`;
+}
+
+function signed(n: number): string {
+  return `${n > 0 ? "+" : ""}${n}`;
 }
 
 function PostColumn({ title, posts }: { title: string; posts: Post[] }) {

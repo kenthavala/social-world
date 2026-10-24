@@ -22,10 +22,14 @@ Branch: feat/the-social-world · Repo: C:\AI\OASIS_SIM
 - Full backend suite: **98 passed**. No orphan listeners or uvicorn processes after any run.
 
 ## In progress
-- Nothing.
+- Nothing. (Session handover: compare-runs deepening D005 now implemented and verified; see DEFECT_LOG.)
 
 ## Next step (file:line)
-- Commit the D017/D018 work and the doc updates (DEFECT_LOG.md, KNOWN_LIMITS.md, this file).
+- Previous sprint's uncommitted work (evidence library, documents rebuild, wizard pre-flight,
+  unknown-run error state, network selection persistence, a11y expansion) was verified: backend
+  suite 143 passed, tsc clean, production build clean, e2e_acceptance 86/86. Committed by the
+  continuing agent, then D005 compare work layered on (`runs.py`, `ComparePage.tsx`, `types.ts`,
+  `test_release_api.py`).
 
 ## Blockers
 - None.

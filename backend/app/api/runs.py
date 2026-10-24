@@ -698,13 +698,67 @@ def _stance_bucket(stances: dict) -> str:
     return "pro" if mean > 0.15 else "con" if mean < -0.15 else "neu"
 
 
+def _brief_issue_meta(source_id: Optional[str]) -> dict[str, dict]:
+    """Issue names and pro/con labels from the source's stored brief."""
+    if not source_id:
+        return {}
+    src = db.query_one("SELECT brief_json FROM sources WHERE id=?", (source_id,))
+    brief = db.uj(src["brief_json"], {}) if src is not None and src["brief_json"] else {}
+    return {i.get("id"): i for i in (brief.get("issues") or []) if i.get("id")}
+
+
+def _issue_perspective(rid: str) -> tuple[dict[str, dict], str]:
+    """Recorded per-issue stance trajectories for one run.
+
+    Aggregates stance_history in a single pass: the mean recorded value at each
+    run's first and last round, and how many agents were observed. Everything is
+    counted from stored rows; a run with no history reports none honestly.
+    """
+    first_tick: dict[str, int] = {}
+    last_tick: dict[str, int] = {}
+    per_tick: dict[str, dict[int, list[float]]] = {}
+    agents_seen: dict[str, set[str]] = {}
+    for row in db.query(
+            "SELECT issue_id, tick, agent_id, value FROM stance_history"
+            " WHERE run_id=?", (rid,)):
+        iid = row["issue_id"]
+        tick = row["tick"]
+        first_tick[iid] = min(tick, first_tick.get(iid, tick))
+        last_tick[iid] = max(tick, last_tick.get(iid, tick))
+        per_tick.setdefault(iid, {}).setdefault(tick, []).append(
+            float(row["value"] or 0.0))
+        agents_seen.setdefault(iid, set()).add(row["agent_id"])
+
+    issues: dict[str, dict] = {}
+    for iid, sums in per_tick.items():
+        vals = sums[last_tick[iid]]
+        start = sums[first_tick[iid]]
+        issues[iid] = {
+            "first_tick": first_tick[iid],
+            "last_tick": last_tick[iid],
+            "start": round(sum(start) / len(start), 4),
+            "end": round(sum(vals) / len(vals), 4),
+            "agents": len(agents_seen.get(iid, ())),
+        }
+        issues[iid]["movement"] = round(issues[iid]["end"] - issues[iid]["start"], 4)
+
+    notes: list[str] = []
+    if not issues:
+        notes.append("No stance-history rows are recorded for this run, so "
+                     "per-issue stances cannot be compared.")
+    return issues, (notes[0] if notes else "")
+
+
 @router.get("/runs/{run_id}/compare")
 def compare_runs(run_id: str, other: str) -> dict:
-    """Counted comparison of two runs: per-round stance mix and citations by chunk."""
+    """Counted comparison of two runs: per-round stance mix and citations by chunk,
+    plus per-issue stance trajectories from the recorded stance history."""
     if db.query_one("SELECT id FROM runs WHERE id=?", (run_id,)) is None or \
             db.query_one("SELECT id FROM runs WHERE id=?", (other,)) is None:
         raise AppError("run not found", component="api", stage="compare", status_code=404)
     out = {}
+    profiles: dict[str, dict] = {}
+    partial_notes: dict[str, str] = {}
     for key, rid in (("left", run_id), ("right", other)):
         rounds: dict[int, dict] = {}
         cites: dict[str, int] = {}
@@ -724,6 +778,10 @@ def compare_runs(run_id: str, other: str) -> dict:
                                "heading": row["heading"] if row else None,
                                "page_start": row["page_start"] if row else None,
                                "page_end": row["page_end"] if row else None})
+        issue_perspective, note = _issue_perspective(rid)
+        profiles[key] = issue_perspective
+        if note:
+            partial_notes[key] = note
         out[key] = {
             "run": run_detail(rid),
             "rounds": [rounds[k] for k in sorted(rounds)],
@@ -734,6 +792,53 @@ def compare_runs(run_id: str, other: str) -> dict:
             "llm_calls": db.scalar("SELECT COUNT(*) FROM llm_calls WHERE run_id=?", (rid,)) or 0,
         }
     left, right = out["left"], out["right"]
+
+    # Per-round stance-mix delta, over every round either run recorded.
+    mix_by_side = {"left": {r["tick"]: r for r in left["rounds"]},
+                   "right": {r["tick"]: r for r in right["rounds"]}}
+    every_tick = sorted(set(mix_by_side["left"]) | set(mix_by_side["right"]))
+    no_posts = {"tick": 0, "pro": 0, "neu": 0, "con": 0, "total": 0}
+    rounds_mix = []
+    for t in every_tick:
+        l = mix_by_side["left"].get(t) or dict(no_posts, tick=t)
+        r = mix_by_side["right"].get(t) or dict(no_posts, tick=t)
+        rounds_mix.append({
+            "tick": t,
+            "left": {"pro": l["pro"], "neu": l["neu"], "con": l["con"], "total": l["total"]},
+            "right": {"pro": r["pro"], "neu": r["neu"], "con": r["con"], "total": r["total"]},
+            "delta_pro": r["pro"] - l["pro"],
+            "delta_neu": r["neu"] - l["neu"],
+            "delta_con": r["con"] - l["con"],
+        })
+
+    # Per-issue delta: only issues both runs recorded share, named by the brief.
+    meta_left = _brief_issue_meta(
+        (db.query_one("SELECT source_id FROM runs WHERE id=?", (run_id,)) or
+         {"source_id": None})["source_id"])
+    meta_right = _brief_issue_meta(
+        (db.query_one("SELECT source_id FROM runs WHERE id=?", (other,)) or
+         {"source_id": None})["source_id"])
+    issues_diff, notes_diff = [], list(partial_notes.values())
+    unshared = set(profiles["left"]) ^ set(profiles["right"])
+    for iid in sorted(set(profiles["left"]) & set(profiles["right"])):
+        lp, rp = profiles["left"][iid], profiles["right"][iid]
+        lm = meta_left.get(iid) or meta_right.get(iid) or {}
+        issues_diff.append({
+            "issue_id": iid,
+            "name": lm.get("name") or iid,
+            "pro_label": lm.get("pro_label"),
+            "con_label": lm.get("con_label"),
+            "left_start": lp["start"], "left_end": lp["end"], "left_movement": lp["movement"],
+            "right_start": rp["start"], "right_end": rp["end"], "right_movement": rp["movement"],
+            "difference_in_movement": round(rp["movement"] - lp["movement"], 4),
+            "left_last_tick": lp["last_tick"], "right_last_tick": rp["last_tick"],
+            "agents_left": lp["agents"], "agents_right": rp["agents"],
+        })
+    for iid in sorted(unshared):
+        side = "original" if iid in profiles["left"] else "intervention"
+        notes_diff.append(f"Issue {iid} is recorded only in the {side} run "
+                          "and has no counterpart, so it is not compared.")
+
     linked = (right["run"].get("parent_run_id") == left["run"]["id"]
               or left["run"].get("parent_run_id") == right["run"]["id"])
     out["diffs"] = {
@@ -742,6 +847,9 @@ def compare_runs(run_id: str, other: str) -> dict:
         "citation_total": sum(c["citations"] for c in right["citations"]) -
                           sum(c["citations"] for c in left["citations"]),
         "rounds": len(right["rounds"]) - len(left["rounds"]),
+        "rounds_mix": rounds_mix,
+        "issues": issues_diff,
+        "notes": notes_diff,
     }
     out["linked"] = linked
     out["label"] = ("Re-run with intervention vs original (counted differences)"

@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app import db
 from app.main import app
 from app.version import APP_VERSION
 
@@ -67,6 +68,51 @@ def test_branch_is_a_truthful_rerun_and_compare_is_counted(client, sample_source
     assert data["right"]["run"]["id"] == body["id"]
     assert "posts" in data["diffs"] and "citation_total" in data["diffs"]
     assert "counted differences" in data["label"]
+    # D005: the comparison must go beyond aggregate counts — per-round stance mix
+    # and per-issue stance trajectories, both counted from stored rows.
+    db.execute("UPDATE sources SET brief_json=? WHERE id=?", (db.j({
+        "summary": "s", "issues": [
+            {"id": "iss_1", "name": "Subsidies", "question": "q?",
+             "pro_label": "Support", "con_label": "Oppose", "evidence_chunk_ids": []}],
+        "stakeholder_groups": []}, ), sample_source["source_id"]))
+    for run, iss, tick, vals in ((original, "iss_1", 1, [0.2, 0.4, 0.6]),
+                                 (original, "iss_1", 2, [0.3, 0.5, 0.7]),
+                                 (original, "iss_2", 1, [-0.2, 0.0]),
+                                 (body["id"], "iss_1", 1, [0.1, 0.5]),
+                                 (body["id"], "iss_1", 2, [0.7, 0.9])):
+        for i, v in enumerate(vals):
+            db.execute("INSERT INTO stance_history(run_id, tick, agent_id, issue_id, value,"
+                       " confidence) VALUES(?,?,?,?,?,0.8)",
+                       (run, tick, f"ag_{i}", iss, v))
+    # posts per round so the stance-mix buckets are comparable too
+    for run, tick, vals in ((original, 1, [0.4]), (original, 2, [0.5]),
+                            (body["id"], 1, [0.3]), (body["id"], 2, [0.8, -0.5])):
+        for i, v in enumerate(vals):
+            db.execute("INSERT INTO posts(id, run_id, tick, agent_id, kind, text, seq,"
+                       " stance_json) VALUES(?,?,?,?,?,?,?,?)",
+                       (f"p_{run}_{tick}_{i}", run, tick, f"ag_{i}", "post", f"text {i}",
+                        tick * 2 + i, db.j({"iss_1": {"value": v, "confidence": 0.8}})))
+    out = client.get(f"/api/runs/{original}/compare?other={body['id']}").json()
+    assert out["diffs"]["rounds_mix"], "per-round stance-mix delta must exist"
+    ticks = [r["tick"] for r in out["diffs"]["rounds_mix"]]
+    assert ticks == sorted(ticks) == [1, 2]
+    mix1, mix2 = out["diffs"]["rounds_mix"]
+    assert mix1["delta_pro"] == 0 and mix1["delta_con"] == 0 and mix1["delta_neu"] == 0
+    assert mix2["delta_pro"] == 0 and mix2["delta_con"] == 1, \
+        "the second round must show the intervention's added opposed post"
+    issues = out["diffs"]["issues"]
+    assert len(issues) == 1, "only the shared issue is comparable"
+    d = issues[0]
+    assert d["issue_id"] == "iss_1"
+    assert d["name"] == "Subsidies", "issues must be named by the configured brief"
+    assert d["left_start"] == pytest.approx(0.4)
+    assert d["left_end"] == pytest.approx(0.5)
+    assert d["right_start"] == pytest.approx(0.3)
+    assert d["right_end"] == pytest.approx(0.8)
+    assert d["difference_in_movement"] == pytest.approx(0.4)
+    assert d["agents_left"] == 3 and d["agents_right"] == 2
+    # the issue recorded only in the original run is reported, not silently dropped
+    assert any("iss_2" in n and "not compared" in n for n in out["diffs"]["notes"])
 
 
 def test_local_provider_presets_need_no_key(client):

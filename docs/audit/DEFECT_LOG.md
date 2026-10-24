@@ -48,7 +48,15 @@
 - **Impact:** The `out["diffs"]` section only compares `posts`, `fallback_posts`, `citation_total`, and `rounds` count difference. It does NOT include per-round stance mix differences, per-issue stance distribution changes, or citation-by-chunk delta. Users cannot see what actually changed between runs.
 - **Root cause:** Diff computation limited to aggregate counts; no per-round or per-issue delta.
 - **Fix:** Enhance diff to include per-round stance mix (pro/con/undecided counts per tick), per-issue stance delta (how many agents shifted stance direction/magnitude), and citation set differences (newly cited chunks vs lost).
-- **Verification:** NOT FIXED. `backend/app/api/runs.py:691-697` `compare_runs` `diffs` still only reports aggregate counts (posts, fallback_posts, citation_total, rounds-count). No per-round stance-mix delta, per-issue stance delta, or citation-by-chunk delta in `diffs` (per-round mix exists in `out[key]["rounds"]` but is not diffed). Slated for Phase 2 quality work — not a Phase 1 non-negotiable.
+- **Verification:** FIXED. `compare_runs` now aggregates `stance_history` per run in one pass and
+  reports `diffs.rounds_mix` (per recorded round: pro/neu/con counts of each side's posts and the
+  intervention-minus-original deltas) and `diffs.issues` (per shared issue: mean recorded stance at
+  each run's first and last round, per-side movement, difference in movement, agent denominators),
+  named by the configured brief. Side differences that only one run records are listed in
+  `diffs.notes` instead of being dropped; a run with no stance history says so honestly.
+  `/compare` consumers: `ComparePage.tsx` renders "Recorded stance by issue" and "Stance mix of the
+  posts, round by round". Tests: `test_release_api.py::test_branch_is_a_truthful_rerun_and_compare_is_counted`
+  (extended), `tools/e2e_acceptance.py` (86 checks, was 80).
 
 ### D006: brief.py evidence_chunk_ids silently truncated to 6 per issue
 - **File:** `backend/app/ingest/brief.py:148`
