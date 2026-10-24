@@ -315,3 +315,234 @@ Regenerated with `generate_report("run_b67bbeb258")` against the QA data dir aft
 | Bug hunt | `node tools/bug_hunt.mjs <base> run_b67bbeb258` | 22 passed, 0 failed | 0 |
 | Acceptance harness | `python tools/e2e_acceptance.py` | 86 passed, 0 failed | 0 |
 | Scale (mock, 10 ticks) | `python tools/scale_test.py 24 100 500` | see table above | 0 |
+
+## Phase 2 - the second finishing pass (24 Oct 2026)
+
+Rules unchanged: no claim without the command and its real output; no push; nothing
+real-provider is claimed while the credential is invalid.
+
+### E033 - the E2E suite could silently run against a REAL provider (found and fixed)
+
+Symptom: `frontend/e2e/navigation-integrity.spec.ts` and `run-recovery.spec.ts` started
+failing with `Expected: "completed" / Received: "paused"`, and a run sat at
+`paused` after 1 tick with `llm_calls_used: 0` and `error: null`.
+
+Diagnosis (read from the running stack, nothing guessed):
+
+```
+GET /api/health                      -> {"provider":"nvidia_nim"}   (expected "mock")
+%TEMP%\oasis-e2e-data\settings.json  -> {"llm_provider":"nvidia_nim",
+                                          "llm_model":"nvidia/nemotron-3-ultra-550b-a55b", ...}
+GET /api/runs/<id>/stats             -> {"calls":11,"by_status":{"error":11},
+                                          "models":{"nvidia/nemotron-3-ultra-550b-a55b":11}}
+```
+
+`app/config.py` resolves settings as "data/settings.json wins over env" (`_pref`), so a
+provider saved into the E2E data dir by an earlier manual session outranked the
+`LLM_PROVIDER=mock` that `start-e2e.bat` and `playwright.config.ts` set. The suite was
+therefore calling a real endpoint with an invalid key: every persona/write call 401'd.
+
+Two defects came out of this, both fixed:
+
+1. `start-e2e.bat` now pins the provider for the run data dir before starting the backend:
+
+   ```bat
+   powershell -NoProfile -Command "$q=[char]34; $p=Join-Path $env:OASIS_DATA_DIR 'settings.json'; [IO.File]::WriteAllText($p, '{'+$q+'llm_provider'+$q+':'+$q+'mock'+$q+'}')"
+   if errorlevel 1 ( echo [start-e2e] ABORT: could not pin the provider to mock... & exit /b 1 )
+   ```
+
+   (`WriteAllText` = UTF-8 without BOM; a BOM would make `json.loads` throw and silently
+   fall back to env.) Verified after restart: `/api/health` -> `{"provider":"mock"}`,
+   `settings.json` -> `{"llm_provider":"mock"}`, and the two specs pass.
+
+2. The engine paused on repeated write failures with **no reason at all**:
+   `ctx.pause_self()` wrote `status='paused'` and an SSE event but left `error_json` NULL,
+   so the room showed a healthy-looking run that had simply stopped. It now pauses through
+   `_pause_with_reason()` with the count, the underlying error and a hint:
+
+   ```
+   message: "3 of the last 3 write calls failed. Last error: RuntimeError: connection reset by provider."
+   hint:    "Check the provider and its key in Settings, then Resume. Completed rounds are
+             kept and agents that could not be written are recorded as template reposts."
+   ```
+
+   The write path also records `ctx.last_write_error`, and a `BudgetExhausted` no longer
+   counts as a write failure (it has its own pause path).
+
+   Test: `backend/tests/test_failure_states.py::test_repeated_write_failures_pause_with_the_reason`
+   (raises from `_write_batch_call`, asserts paused + message + hint + kept agents/posts,
+   then clears the fault, resumes and reaches `completed`). `test_failure_states.py` ->
+   **19 passed** (was 18).
+
+### Item 1 (frontend half) - reload during an active run
+
+`frontend/e2e/run-recovery.spec.ts` (new, both projects): create a 30-agent/300-round run
+*not* started, open the run room, select **Agents**, click **Start**, wait until the API
+reports posts, then `page.reload()` mid-run and assert: the same run id renders, the Agents
+view is restored (sessionStorage), `.banner-err` count is 0, the header follows the run to
+`Completed`, the header **Posts** stat equals the API's stored post total, and every
+`article[data-post-id]` is unique. `data-post-id` was added to the post card for that check.
+Result: `chromium-desktop` + `mobile-chrome` -> 2 passed.
+
+The shared fixture `frontend/e2e/run-fixture.ts` now holds `SOURCE_TEXT`, `BRIEF`,
+`createSource`, `waitForRun`, `createRun`, `createCompletedRun`, `runNav`, `openTab`;
+`navigation-integrity.spec.ts` was refactored onto it (no duplicated fixture code).
+`navigation-integrity.spec.ts` + `run-recovery.spec.ts` together: 8 tests, 1 skipped
+(the 390px contract runs once, on `mobile-chrome`), 7 passed.
+
+### Item 6 - accessibility, measured
+
+- The duplicate run navigation is gone. The desktop `nav[aria-label="Run views"]` is rendered
+  only when `!isMobile` and the `.run-tabs { display: none }` rule was removed from the CSS,
+  so exactly one run navigation exists in the tree per viewport.
+- `@axe-core/playwright` 4.14.0 added (`frontend/package.json`) and
+  `frontend/e2e/accessibility.spec.ts` (new) audits all ten screens in both projects:
+  home, wizard, sources, settings, feed, agents, connections, findings, quality, compare.
+  The gate is explicit: **no `serious` or `critical` violations**; the exact per-screen
+  violation lists are attached to every test as annotations, so nothing is hidden.
+- Fixes made for real violations found by axe:
+  - `label-content-name-mismatch`: wordmark text wrapped in a real `.wm-text` span
+    (the accessible name now contains the visible text); the sidebar theme button is
+    `Toggle colour theme - Dark mode|Light mode`; post avatars include their initials;
+    the passage button uses `title` instead of an `aria-label` that omitted the visible
+    page text; compare round buttons are labelled `Round 01:` (zero-padded, as displayed).
+  - `color-contrast`: `stanceTextColor()` (`--pro-fg`/`--con-fg`/`--fg-2`) replaces raw
+    canvas hexes for every stance number, and the moderate-strength badge uses `--accent-fg`.
+  - `scrollable-region-focusable` (serious): every `overflow-x-auto` region is now a
+    keyboard stop with a name (`tabIndex={0} role="group" aria-label="... -- scrollable ..."`)
+    in HomePage, SimulationsPage, ComparePage (4), LogTab and NetworkTab.
+  - `landmark-one-main` + `region` (moderate): the route content is now a single `<main>`
+    in `App.tsx` (HomePage's own `<main>` was removed to avoid a duplicate), and the
+    provider/server banners plus the mobile "New simulation" FAB are wrapped in named
+    `role="region"` landmarks.
+  - `landmark-unique` / `landmark-no-duplicate-banner` (moderate): the shell sidebar is
+    `aria-label="Sections"` and the documents list panel is `aria-label="Document list"`.
+  - `page-has-heading-one` (moderate): the wizard's page title is now an `<h1 class="eyebrow">`.
+  - `link-in-text-block`: `.kbd-link` is underlined, not colour-only.
+- Final measurement (`node axe-probe.mjs`, ten screens x 1440x900 and 390x844, axe default
+  rule set): **0 violations of any impact on all 20 screen/viewport pairs**
+  (before this pass: home 3, wizard 5, sources 5, settings 4, run tabs 2 each).
+- What this is not: axe covers a subset of the success criteria and cannot judge screen-reader
+  output, reading order or colour-blind readability. The claim is "0 axe violations in the
+  default rule set", not "WCAG compliant".
+
+### Item 3 - the wizard fixture was conditional (found by the full suite, fixed)
+
+Full-suite run: `wizard-editing.spec.ts >> duplicate, reorder and edit keep ids positional
+and positions attached` failed on **both** projects with
+`Members of the public has no position on New Issue`.
+
+The cause is not the wizard: `normaliseIssues()` adds issues the provider did not draft
+(the new row defaults to "New Issue"), and a blank stance is deliberately stored as an
+*absent* key rather than a fabricated 0. So the fixture's precondition
+("every group has a position on every issue") only held when the mock brief happened to
+draft enough issues with positions - a vacuous, data-dependent setup.
+
+Fix (test only, assertions unchanged and now non-vacuous): `seedPositions(page, issues, groups)`
+fills every `(iss_N)` stance input with a distinct non-zero value before the brief is saved,
+so all 9 pairs are explicitly recorded. `wizard-editing.spec.ts` -> **6 passed** (3 tests x
+2 projects, 12.9s), and the "position follows its own issue" comparisons now run against
+values the test itself set.
+
+### Item 7 - comparison discoverability
+
+Ticking a second agent in the Connections list used to jump straight to the comparison view
+and tick boxes were hard to reach at 390px. `pick()` now keeps the list visible while ticking
+and the list shows an explicit **Compare N selected** button; the comparison table renders
+only while the selection is an agent, so choosing a group always shows the group panel (an
+explicit group/edge selection wins over a stale comparison). The new specs cover agent
+comparison, the group detail panel, the 390px entity list, and the
+finding -> passage -> finding round trip. On the backend, `narrative.py` gained
+`_evidence_for_posts()` so the `evidence_use` finding carries the most-cited passages
+(`evidence` + `post_ids`), which is what makes document -> chunk -> evidence -> finding
+navigable in every run with citations. `test_report_factuality.py` + `test_data_matrix.py`
+-> 15 passed.
+
+
+### E034 - the scale harness was measuring tracemalloc, not seeding
+
+Pass 1 of the gate sweep reported `seed_s = 7.11 s` at 500 agents (and the phase-1 table
+in this log says 24.70 s). A profile of the same seeding run, without the tracer, measured
+2.19 s, and the graph step alone 0.47 s. Cause: `tools/scale_test.py` called
+`tracemalloc.start()` *before* `seed_run`, and tracemalloc's per-allocation overhead is
+proportional to the number of Python calls, which is exactly what seeding is made of. The
+old numbers were mostly the instrument.
+
+Fix: seeding is now timed with tracing off; `peakMB` is traced across the tick loop (where
+the population-held state actually grows), and the header says so. Corrected measurement,
+10 rounds, mock provider, default volume (`writes/tick` 4):
+
+| agents | seed s | tick avg s | tick max s | posts | edges | analytics s | db growth MB | peak MB |
+|---|---|---|---|---|---|---|---|---|
+| 24 | 0.05 | 0.063 | 0.102 | 40 | 298 | 0.337 | 0.73 | 0.3 |
+| 100 | 0.05 | 0.192 | 0.240 | 40 | 1560 | 0.206 | 1.43 | 0.8 |
+| 500 | 0.71 | 1.008 | 1.233 | 40 | 9588 | 1.167 | 5.05 | 3.5 |
+
+Realistic post volume (`SCALE_WRITES_PER_TICK=50`, ~500 posts):
+
+| agents | seed s | tick avg s | tick max s | posts | edges | analytics s | db growth MB | peak MB |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 0.10 | 0.745 | 1.065 | 458 | 1073 | 0.524 | 4.28 | 1.4 |
+| 500 | 0.74 | 2.666 | 3.457 | 500 | 9186 | 1.236 | 9.22 | 4.7 |
+
+The remaining growth at 500 agents is the similarity graph itself (0.47 s of the 0.71 s
+seed), which is inherently O(n^2): every agent compares its stances with every other agent.
+The cubic term is gone. Graph step, measured with the pre-fix module extracted from
+`b1ae311` and the identical population and seed:
+
+| agents | pre-fix | fixed | speedup | same edge set + weights |
+|---|---|---|---|---|
+| 100 | 0.115 s | 0.021 s | 5.6x | yes |
+| 500 | 7.827 s | 0.474 s | 16.5x | yes |
+
+### E035 - a flaky string comparison in the report-factuality test (found by running the gates twice)
+
+Pass B failed exactly one test:
+`test_report_factuality.py::test_headline_numbers_match_independent_recomputation`,
+`assert '-0.00' == '+0.00'`. That is the whole point of running the gates twice.
+
+Two independent causes, both in the test, both fixed without weakening it:
+
+1. `sum(vals) / len(vals)` in the test vs `round(statistics.mean(vals), 3)` in the
+   renderer. `statistics.mean` sums floats exactly (Fraction arithmetic); `sum/len` does
+   not, so the last bits differ and can cross a 3-dp boundary. The test now uses
+   `statistics.mean`.
+2. The renderer's per-group change is `round(mean(f - i for paired values), 3)`, not the
+   difference of the two rounded means. The two agree in exact arithmetic but differ by up
+   to 0.001 after rounding, which is the difference between printing `+0.00` and `-0.00`.
+   The test now reproduces the renderer's definition exactly (same per-issue loop, same
+   independent filtering of missing values, same pairing) and *also* asserts that the two
+   definitions agree within the printed precision, so a wrong sign or a misplaced value
+   still fails.
+
+Re-run: the single test 10x and the file 6x -> 0 failures (the fixture's run ids are random,
+so each run exercises different mock text).
+
+
+## Final gates - twice, end to end, on the frozen tree (25 Oct 2026)
+
+The code tree was frozen before both passes (items 1-9 complete); only this log was written
+afterwards. Earlier in this phase the same script was run twice as well (pass 1 before the
+measurement fix, and passes A/B, where B caught E035); the two passes recorded here are the
+ones that correspond to the committed tree.
+
+| Gate | Command | Pass C | Pass D |
+|---|---|---|---|
+| Backend suite | `python -m pytest tests -q` | 188 passed, 3 warnings in 146.4 s, exit 0 | 188 passed, 3 warnings in 146.4 s, exit 0 |
+| Type check | `npx tsc --noEmit` | no output, exit 0 | no output, exit 0 |
+| Production build | `npm run build` | exit 0 | exit 0 |
+| Playwright (both projects) | `npx playwright test --reporter=line` | 67 passed, 1 skipped (3.2 m), exit 0 | 67 passed, 1 skipped (3.1 m), exit 0 |
+| Acceptance harness | `python tools/e2e_acceptance.py` | 86 passed, 0 failed, exit 0 | 86 passed, 0 failed, exit 0 |
+| Scale, default volume | `python tools/scale_test.py 24 100 500` | exit 0, 24/100/500 seed 0.05/0.06/0.72 s | exit 0, seed 0.06/0.05/0.71 s |
+| Scale, realistic volume | `SCALE_WRITES_PER_TICK=50 python tools/scale_test.py 100 500` | exit 0, 458/500 posts | exit 0, 458/500 posts |
+| Visual + accessibility QA | `node tools/visual_qa.mjs <base> <run>` | 50 screenshots, "No problems detected", exit 0 | idem, exit 0 |
+| Bug hunt | `node tools/bug_hunt.mjs <base> <run>` | 22 passed, 0 failed, exit 0 | 22 passed, 0 failed, exit 0 |
+| axe sweep | `node axe-probe.mjs` (10 screens x 2 viewports) | 0 violations of any impact | 0 violations of any impact |
+
+The single skipped Playwright test is the 390px entity-list contract, which is skipped on
+the desktop project by design and runs on `mobile-chrome`.
+
+Playwright's 67 + 1 skipped = 68 = 34 tests x 2 projects (m2-ui, phase1-dod, screenshots,
+wizard-integrity, wizard-editing, navigation-integrity, run-recovery, accessibility).
+
+
