@@ -295,7 +295,8 @@ export default function SimulationsPage({ onOpen, onNew, onError, settingsVersio
           ))}
         </div>
         <div className="panel hidden overflow-hidden lg:block">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0} role="group"
+               aria-label="Simulations — scrollable table">
             <table className="tbl" style={{ minWidth: 780 }}>
               <thead>
                 <tr>

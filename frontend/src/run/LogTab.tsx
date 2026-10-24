@@ -88,7 +88,8 @@ export default function LogTab({ runId, bumpKey, onError }: {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0} role="group"
+               aria-label="Recorded LLM calls — scrollable table">
             <table className="tbl" style={{ minWidth: 720 }}>
               <thead>
                 <tr>

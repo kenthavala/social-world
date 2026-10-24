@@ -135,12 +135,12 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
           <h2 className="t-h3">Counted differences</h2>
           <span className="t-meta">intervention minus original</span>
         </div>
-        <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
           <Diff label="Posts" value={data.diffs.posts} />
           <Diff label="Fallback posts" value={data.diffs.fallback_posts} />
           <Diff label="Citation references" value={data.diffs.citation_total} />
           <Diff label="Rounds present" value={data.diffs.rounds} />
-        </div>
+        </dl>
       </section>
 
       <section className="panel mt-4" aria-labelledby="cmp-issues">
@@ -157,7 +157,8 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
             </ul>
           )}
           {data.diffs.issues && data.diffs.issues.length > 0 ? (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0} role="group"
+                 aria-label="Recorded stance by issue — scrollable table">
               <table className="tbl" style={{ minWidth: 720 }}>
                 <thead>
                   <tr><th>Issue</th><th className="r">Original start → end</th>
@@ -209,14 +210,15 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
             <span className="ml-2">top: original · bottom: intervention</span>
           </span>
         </div>
-        <div className="overflow-x-auto p-4">
+        <div className="overflow-x-auto p-4" tabIndex={0} role="group"
+             aria-label="Posts per round — scrollable chart">
           {rounds.length === 0 ? (
             <p className="t-meta">No recorded rounds in either run.</p>
           ) : (
             <div className="grid" style={{ gridAutoFlow: "column", gridAutoColumns: "minmax(12px, 1fr)", gap: 4, minWidth: rounds.length * 14 }}>
               {rounds.map((r) => (
                 <button key={r.tick} onClick={() => setSelected(selected === r.tick ? null : r.tick)}
-                        aria-label={`Round ${r.tick}: original ${r.left.total} posts, intervention ${r.right.total}`}
+                        aria-label={`Round ${String(r.tick).padStart(2, "0")}: original ${r.left.total} posts, intervention ${r.right.total}`}
                         style={{ background: "none", border: 0, padding: 0, cursor: "pointer",
                                  outline: selected === r.tick ? "1px solid var(--accent)" : "none",
                                  borderRadius: 2 }}>
@@ -239,7 +241,8 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
           <h2 id="cmp-mix" className="t-h3">Stance mix of the posts, round by round</h2>
           <span className="t-meta">original → intervention · and the difference</span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" tabIndex={0} role="group"
+             aria-label="Stance mix of the posts, round by round — scrollable table">
           {mixRows.length === 0 ? (
             <p className="t-meta p-4">No recorded rounds in either run.</p>
           ) : (
@@ -292,7 +295,8 @@ export default function ComparePage({ a, b, onBack, onOpen, onError }: {
           <h2 id="cmp-cites" className="t-h3">Citations by source passage</h2>
           <span className="t-meta">counted references</span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" tabIndex={0} role="group"
+             aria-label="Citations by source passage — scrollable table">
           <table className="tbl" style={{ minWidth: 640 }}>
             <thead>
               <tr><th>Page</th><th>Chunk</th><th>Heading</th><th className="r">Original</th>

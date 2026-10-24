@@ -36,7 +36,8 @@ export default function App() {
   return (
     <Shell route={route}>
       {provider === "mock" && route.name !== "wizard" && !isRun && (
-        <div className="banner banner-warn mx-4 mt-4 md:mx-8" style={{ alignItems: "flex-start" }}>
+        <div className="banner banner-warn mx-4 mt-4 md:mx-8" role="region"
+             aria-label="Provider notice" style={{ alignItems: "flex-start" }}>
           <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden style={{ color: "var(--warn)", marginTop: 1 }}>
             <path d="M8 2 14.5 13.5h-13z" /><path d="M8 6.5V9M8 11.5v.01" />
           </svg>
@@ -48,7 +49,8 @@ export default function App() {
       )}
 
       {!serverUp && (
-        <div className="banner banner-err mx-4 mt-4 md:mx-8">
+        <div className="banner banner-err mx-4 mt-4 md:mx-8" role="region"
+             aria-label="Server status">
           <span>
             Backend unreachable — is the server running? Start it with <code className="mono">start.bat</code> (or
             uvicorn on http://127.0.0.1:8000).
@@ -56,7 +58,9 @@ export default function App() {
         </div>
       )}
 
-      <div className={isRun ? "pb-16" : "mx-auto w-full max-w-[1200px] px-4 pb-16 md:px-8"}>
+      {/* One main landmark per document, declared here so every route has exactly
+          one (the pages themselves no longer declare their own). */}
+      <main className={isRun ? "pb-16" : "mx-auto w-full max-w-[1200px] px-4 pb-16 md:px-8"}>
         <ErrorBanner err={err} onDismiss={() => setErr(null)} />
         {route.name === "home" && (
           <HomePage onOpen={openRun} onNew={() => navigate({ name: "wizard" })}
@@ -83,7 +87,7 @@ export default function App() {
         {route.name === "compare" && (
           <ComparePage a={route.a} b={route.b} onBack={goSims} onOpen={openRun} onError={setErr} />
         )}
-      </div>
+      </main>
     </Shell>
   );
 }

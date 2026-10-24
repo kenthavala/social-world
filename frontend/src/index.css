@@ -212,6 +212,10 @@ textarea.input, textarea.textarea { min-height: 104px; resize: vertical; line-he
 .status-draft { color: var(--fg-3); background: transparent; border: 1px dashed var(--line-3); }
 .status-ingesting { color: var(--accent-fg); background: var(--accent-soft); border-color: var(--accent-line); }
 .status-ready { color: var(--ok-fg); background: var(--ok-soft); border-color: rgba(76,195,138,.32); }
+/* save-state (wizard) and assessment-state (quality mechanisms) pills */
+.status-ok, .status-assessed { color: var(--ok-fg); background: var(--ok-soft); border-color: var(--ok-line); }
+.status-err { color: var(--err-fg); background: var(--err-soft); border-color: var(--err-line); }
+.status-idle, .status-not-assessed { color: var(--fg-3); background: var(--bg-2); border-color: var(--line-2); }
 .mo.light .status-paused { border-color: rgba(179,134,0,.35); }
 .mo.light .status-completed, .mo.light .status-ready { border-color: rgba(30,154,98,.32); }
 /* legacy status badge modifiers */
@@ -280,6 +284,8 @@ button.list-row { border-left: 0; border-right: 0; border-top: 0; background: tr
 .post:hover { background: var(--bg-hover); }
 .post.enter-a { animation: oz-enter 900ms var(--ease) both; }
 .post.is-focused { background: var(--accent-soft); }
+/* A finding arrived at from a cited passage: outline it briefly, then fade. */
+[data-focused="true"] { outline: 2px solid var(--accent); outline-offset: 2px; background: var(--accent-soft); transition: background var(--dur-2) var(--ease); }
 .post-head { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; row-gap: 2px; }
 .post-name { font-size: 13.5px; font-weight: 600; color: var(--fg-1); }
 .post-persona { font-size: 12px; color: var(--fg-3); min-width: 0; }
@@ -396,7 +402,7 @@ button.tk:hover { box-shadow: inset 0 0 0 1px var(--line-3); }
 /* ---------------------------------------------------------------- misc */
 .code { font: 400 12px/1.6 var(--font-mono); color: var(--fg-2); background: var(--bg-0); border: 1px solid var(--line-1); border-radius: var(--r-2); padding: 12px 14px; white-space: pre; overflow-x: auto; }
 .mo.light .code { background: var(--bg-2); }
-.kbd-link { color: var(--accent-fg); }
+.kbd-link { color: var(--accent-fg); text-decoration: underline; text-underline-offset: 2px; }
 .kbd-link:hover { text-decoration: underline; }
 .fade-in { animation: oz-fade var(--dur-2) var(--ease); }
 .breathe { animation: oz-breathe 1.6s var(--ease) infinite; }
@@ -458,7 +464,6 @@ button.tk:hover { box-shadow: inset 0 0 0 1px var(--line-3); }
   .side .side-foot .nav > span:last-child { display: none !important; }
   .run-breadcrumb, .run-meta { display: none !important; }
   .run-title { font-size: 20px; line-height: 26px; }
-  .run-tabs { display: none !important; }
   .run-stats { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
   .run-stats > .stat:nth-child(4), .run-stats > .stat:nth-child(5) { display: none !important; }
   .run-header-inner { padding-top: 10px !important; gap: 10px !important; }

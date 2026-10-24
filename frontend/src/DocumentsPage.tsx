@@ -143,7 +143,7 @@ export default function DocumentsPage({ onError, initialSource }: {
       ) : (
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
           {/* ---------------- document list ---------------- */}
-          <aside className="panel">
+          <aside className="panel" aria-label="Document list">
             <div className="panel-head">
               <h2 className="t-h3">Documents ({docs.length})</h2>
             </div>

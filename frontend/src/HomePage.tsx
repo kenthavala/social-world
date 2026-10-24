@@ -115,7 +115,7 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
   const today = new Date().toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
   return (
-    <main>
+    <div>
       {/* page header */}
       <header className="flex flex-wrap items-center justify-between gap-4 pt-6" style={{ minHeight: 56 }}>
         <div className="flex items-center gap-2.5">
@@ -284,7 +284,8 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
                   <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> New simulation</button>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto" tabIndex={0} role="group"
+                     aria-label="Recent simulations — scrollable table">
                   <table className="tbl">
                     <thead>
                       <tr>
@@ -414,6 +415,6 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
           </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

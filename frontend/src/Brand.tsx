@@ -44,8 +44,8 @@ export function Wordmark({ compact }: { compact?: boolean }) {
     <a className="wordmark" href="#/" aria-label="The Social World — home"
        style={compact ? { marginBottom: 0 } : undefined}>
       <Mark size={20} />
-      <span className="wm-the">The</span>
-      <span className="wm-name">Social World</span>
+      <span className="wm-text"><span className="wm-the">The</span>{" "}
+        <span className="wm-name">Social World</span></span>
     </a>
   );
 }

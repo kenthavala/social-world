@@ -281,7 +281,9 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     <div className="pt-6 md:pt-8">
       <div className="mb-5 flex items-center justify-between gap-3">
         <div>
-          <div className="eyebrow">New simulation</div>
+          {/* The wizard is a page: it needs a level-one heading for the document
+              outline (and for a screen reader's heading list). */}
+          <h1 className="eyebrow">New simulation</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 t-meta">
             <span className="badge" style={{ borderStyle: "dashed" }}>DRAFT · AUTOSAVED</span>
             <span>{STEPS[step - 1].label} — step {step} of {LAST_STEP}</span>

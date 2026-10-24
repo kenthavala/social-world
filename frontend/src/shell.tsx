@@ -177,16 +177,18 @@ export function Shell({ route, children }: { route: Route; children: React.React
                 );
               })}
             </nav>
-            <a
-              href="#/new"
-              aria-label="New simulation"
-              className="btn btn-primary"
-              style={{ position: "fixed", left: "50%", bottom: 78, transform: "translateX(-50%)",
-                       width: 52, height: 52, borderRadius: "50%", zIndex: 32,
-                       boxShadow: "var(--shadow-pop)" }}
-            >
-              <PlusIcon />
-            </a>
+            <div role="region" aria-label="Quick actions">
+              <a
+                href="#/new"
+                aria-label="New simulation"
+                className="btn btn-primary"
+                style={{ position: "fixed", left: "50%", bottom: 78, transform: "translateX(-50%)",
+                         width: 52, height: 52, borderRadius: "50%", zIndex: 32,
+                         boxShadow: "var(--shadow-pop)" }}
+              >
+                <PlusIcon />
+              </a>
+            </div>
           </>
         )}
       </div>
@@ -195,7 +197,8 @@ export function Shell({ route, children }: { route: Route; children: React.React
 
   return (
     <div className="mo min-h-screen flex">
-      <aside className="side sticky top-0 h-screen" style={{ flex: "0 0 224px" }}>
+      <aside className="side sticky top-0 h-screen" aria-label="Sections"
+             style={{ flex: "0 0 224px" }}>
         <Wordmark />
         <a className="btn btn-primary btn-block side-new" href="#/new" title="New simulation" style={{ marginBottom: 14 }}>
           <PlusIcon /> <span className="btn-label">New simulation</span>
@@ -245,7 +248,9 @@ export function Shell({ route, children }: { route: Route; children: React.React
               )}
             </span>
           </a>
-          <button className="btn btn-ghost btn-sm" onClick={toggle} style={{ justifyContent: "flex-start", paddingLeft: 10 }} aria-label="Toggle colour theme">
+          <button className="btn btn-ghost btn-sm" onClick={toggle} style={{ justifyContent: "flex-start", paddingLeft: 10 }}
+                  aria-label={`Toggle colour theme — ${theme === "light" ? "Dark mode" : "Light mode"}`}
+                  title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
             <span className="btn-label">{theme === "light" ? "Dark mode" : "Light mode"}</span>
           </button>
