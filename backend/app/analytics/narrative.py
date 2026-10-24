@@ -163,6 +163,22 @@ def _evidence_for_issue(posts: list[dict], issue_id: str, chunks: dict,
     return out
 
 
+def _evidence_for_posts(posts: list[dict], chunks: dict, limit: int = 3) -> list[dict]:
+    """The passages the conversation leaned on most, counted from citations."""
+    counts: dict[str, int] = {}
+    for p in posts:
+        for cid in p["cited"]:
+            counts[cid] = counts.get(cid, 0) + 1
+    out = []
+    for cid, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]:
+        c = chunks.get(cid) or {}
+        out.append({"chunk_id": cid, "citations": n,
+                    "page_start": c.get("page_start"), "page_end": c.get("page_end"),
+                    "heading": c.get("heading"),
+                    "excerpt": (c.get("text") or "")[:220]})
+    return out
+
+
 def _top_agents_for_issue(posts: list[dict], agents: list[dict], issue_id: str,
                           limit: int = 3) -> list[dict]:
     per: dict[str, list[float]] = {}
@@ -451,6 +467,8 @@ def build_narrative(run_id: str) -> dict:
 
     if sourced:
         coverage = _pct(len(sourced), len(posts))
+        used = _evidence_for_posts(posts, data["chunks"])
+        used_ids = {e["chunk_id"] for e in used}
         findings.append({
             "id": "evidence_use",
             "headline": "Every claim was tied back to the source document"
@@ -472,8 +490,9 @@ def build_narrative(run_id: str) -> dict:
             "agents": [],
             "data": [{"label": "Posts citing a source passage", "value": f"{len(sourced)} / {len(posts)}"},
                      {"label": "Distinct passages used", "value": str(len(cited_chunks))}],
-            "evidence": [],
-            "post_ids": [],
+            "evidence": used,
+            "post_ids": [p["id"] for p in posts
+                         if any(c in used_ids for c in p["cited"])],
         })
 
     # When nothing moved, stability IS the finding — say it rather than showing an
