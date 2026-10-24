@@ -282,6 +282,13 @@ def generate_report(run_id: str) -> dict:
         narrative = {}
     source_row = (db.query_one("SELECT id, filename, pages FROM sources WHERE id=?",
                                (r["source_id"],)) if r["source_id"] else None)
+    # The quality panel and the report must speak with one voice: reuse the same
+    # computation the UI shows rather than re-deriving a second score.
+    try:
+        from app.analytics.realism import compute_realism
+        quality = compute_realism(run_id)
+    except Exception:  # noqa: BLE001 — a quality failure must not lose the report
+        quality = None
     md = report_doc.render(
         run=dict(r), cfg=cfg, provider=provider_hint, analytics=analytics,
         issue_means=issue_means, issue_names=issue_names, groups=groups,
@@ -292,6 +299,7 @@ def generate_report(run_id: str) -> dict:
         counts={"brief_summary": (db.uj(db.scalar(
             "SELECT brief_json FROM sources WHERE id=?", (r["source_id"],)) or "{}", {})
             or {}).get("summary")},
+        quality=quality,
     )
     db.execute("INSERT OR REPLACE INTO reports(run_id, created_at, analytics_json,"
                " report_md, report_json) VALUES(?,?,?,?,?)",

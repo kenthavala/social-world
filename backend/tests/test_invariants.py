@@ -184,6 +184,35 @@ async def test_report_is_traceable_and_never_claims_accuracy(fresh_db, sample_so
     # counted source
     assert "recorded database rows" in md
 
+    # The quality section exists, is labelled as configuration quality, and the
+    # report reuses the Quality panel's computation instead of inventing a score.
+    assert "Quality assessment" in md
+    assert "not predictive accuracy" in md.lower()
+    assert "Predictive accuracy: Not validated" in md
+    from app.analytics.realism import compute_realism
+    quality = compute_realism(run_id)
+    assert quality["overall"]["score"] is not None, "a completed run must be assessable"
+    assert f"{quality['overall']['score']}/100" in md
+    for d in quality["dimensions"]:
+        if d["status"] == "assessed":
+            assert d["label"] in md
+
+
+@pytest.mark.asyncio
+async def test_report_does_not_name_a_model_for_a_mock_run(fresh_db, sample_source):
+    """A mock run never calls a model; the header must not imply one was used."""
+    run_id = "run_inv_mock_header"
+    sid, brief = prepare(sample_source, 3, 4, run_id, 8, ticks=1)
+    # The config keeps the last selected model even when the provider is mock.
+    db.execute("UPDATE runs SET provider_json=? WHERE id=?",
+               (db.j({"name": "mock", "model": "vendor/some-model"}), run_id))
+    await run_once(sid, brief, run_id, ticks=1)
+
+    from app.analytics.report import generate_report
+    md = generate_report(run_id)["report_md"]
+    assert "not used by mock" in md
+    assert "vendor/some-model" not in md
+
 
 @pytest.mark.asyncio
 async def test_narrative_covers_all_configured_entities(fresh_db, sample_source):

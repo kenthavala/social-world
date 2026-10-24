@@ -60,6 +60,7 @@ def render(
     scenario: dict,
     source: Optional[dict],
     counts: dict,
+    quality: Optional[dict] = None,
 ) -> str:
     name = run.get("name") or run.get("id")
     started = str(run.get("started_at") or "—")[:19].replace("T", " ")
@@ -87,7 +88,9 @@ def render(
         f"| **Date** | {finished} UTC |",
         f"| **Source** | {source.get('filename') if source else '—'} |",
         f"| **Simulation window** | {started} → {finished} UTC |",
-        f"| **Provider** | `{provider.get('name') or 'n/a'}` / `{provider.get('model') or 'n/a'}` |",
+        # A mock run never calls a model, so naming one would imply it was used.
+        f"| **Provider** | `{provider.get('name') or 'n/a'}` / "
+        f"{'not used by mock' if (provider.get('name') == 'mock') else ('`' + str(provider.get('model') or 'n/a') + '`')} |",
         f"| **Scale** | {scale.get('agents', 0)} agents · "
         f"{scale.get('rounds_completed', 0)} rounds · {scale.get('posts', 0)} posts |",
         "",
@@ -415,6 +418,42 @@ def render(
         "predictive accuracy and must not be read as one.",
         "",
     ]
+
+    # -------------------------------------------------------- quality assessment
+    if quality:
+        overall = quality.get("overall") or {}
+        dims = quality.get("dimensions") or []
+        assessed = [d for d in dims if d.get("status") == "assessed"]
+        unassessed = [d for d in dims if d.get("status") != "assessed"]
+        L += _rule("Quality assessment")
+        L += [
+            "This section describes the *quality of the simulation configuration and of its "
+            "recorded data*. It is not predictive accuracy.",
+            "",
+        ]
+        if overall.get("score") is not None:
+            L += [f"**Configuration quality: {overall['score']}/100 — {overall.get('label', '')}.**",
+                  "", f"{overall.get('method', '')}", ""]
+        else:
+            L += ["No configuration-quality score could be computed for this run.", ""]
+        if assessed:
+            L += ["| Dimension | Group | Status | Score |", "|---|---|---|---|"]
+            for d in assessed:
+                L.append(f"| {d['label']} | {d.get('group', '—')} | assessed | "
+                         f"{d.get('score') if d.get('score') is not None else '—'} |")
+            L.append("")
+        if unassessed:
+            L += ["**Not assessed** (excluded from the score, not counted as zero): "
+                  + ", ".join(d["label"] for d in unassessed) + ".", ""]
+        recs = [d for d in dims if d.get("recommendation") and d.get("status") != "assessed"][:3]
+        if recs:
+            L += ["**What would improve this run**", ""]
+            for d in recs:
+                L.append(f"- **{d['label']}** — {d['recommendation']}")
+            L.append("")
+        acc = quality.get("predictive_accuracy") or {}
+        L += [f"**Predictive accuracy: {acc.get('label') or 'not validated'}.** "
+              f"{acc.get('message') or ''}".strip(), ""]
 
     # ------------------------------------------------------------- limitations
     L += _rule("Limitations")
