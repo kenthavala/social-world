@@ -287,8 +287,119 @@ export default function FindingsView({ data }: { data: NarrativeResponse }) {
           {showDetail ? "Hide" : "Show"} the raw counts behind these findings
         </button>
       </div>
-      {showDetail && <div id="counted-detail" />}
+      {showDetail && <CountedDetail data={data} />}
     </div>
+  );
+}
+
+/** The counted rows behind the briefing: unrounded, uninterpreted, collapsible. */
+function CountedDetail({ data }: { data: NarrativeResponse }) {
+  const s = data.scale;
+  const scale: [string, string | number][] = [
+    ["Agents seeded", s.agents],
+    ["Posts recorded", s.posts],
+    ["Rounds completed", s.rounds_configured ? `${s.rounds_completed} of ${s.rounds_configured}` : s.rounds_completed],
+    ["Stance observations", s.stance_observations],
+    ["Issues configured", s.issues],
+    ["Stakeholder groups", s.groups],
+    ["Posts citing a source", s.posts_with_source],
+    ["Distinct passages cited", s.distinct_chunks_cited],
+  ];
+  const num = (v: number | null, digits = 2) => (v == null ? "—" : v.toFixed(digits));
+  const signed = (v: number | null) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}`);
+
+  return (
+    <section id="counted-detail" className="panel" aria-labelledby="cd-h">
+      <div className="panel-head">
+        <h3 id="cd-h" className="t-h3">Counted detail</h3>
+        <span className="t-meta">The recorded numbers behind the briefing — no interpretation added</span>
+      </div>
+      <div className="panel-body flex flex-col gap-5">
+        <div>
+          <div className="eyebrow mb-2">Scale</div>
+          <dl className="m-0 grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {scale.map(([label, value]) => (
+              <div key={label} className="panel-2 p-2">
+                <dt className="t-meta">{label}</dt>
+                <dd className="mono m-0 mt-0.5" style={{ fontSize: 15, color: "var(--fg-1)" }}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="t-meta mt-2">
+            Method: {data.provenance.method} Predictive accuracy:{" "}
+            {data.provenance.predictive_accuracy === "not_validated"
+              ? "not validated — no accuracy figure is claimed for this run."
+              : data.provenance.predictive_accuracy}
+          </p>
+        </div>
+
+        <div>
+          <div className="eyebrow mb-2">Stance by issue</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="tbl" style={{ minWidth: 640 }}>
+              <thead>
+                <tr>
+                  <th scope="col">Issue</th>
+                  <th scope="col">Observed</th>
+                  <th scope="col">Start</th>
+                  <th scope="col">End</th>
+                  <th scope="col">Change</th>
+                  <th scope="col">Spread</th>
+                  <th scope="col">Pro / undecided / con</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.issues.map((i) => (
+                  <tr key={i.issue_id}>
+                    <td><span className="t-id">{i.issue_id}</span> {i.name}</td>
+                    <td className="mono">{i.observed_agents}</td>
+                    <td className="mono">{signed(i.initial_mean)}</td>
+                    <td className="mono">{signed(i.final_mean)}</td>
+                    <td className="mono">{signed(i.delta)}</td>
+                    <td className="mono">{num(i.spread)}</td>
+                    <td className="mono">{i.pro_agents} / {i.neutral_agents} / {i.con_agents}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <div className="eyebrow mb-2">Stance by stakeholder group</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="tbl" style={{ minWidth: 560 }}>
+              <thead>
+                <tr>
+                  <th scope="col">Group</th>
+                  <th scope="col">Agents</th>
+                  <th scope="col">Start</th>
+                  <th scope="col">End</th>
+                  <th scope="col">Change</th>
+                  <th scope="col">Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.stakeholders.map((g) => (
+                  <tr key={g.name}>
+                    <td>{g.name}</td>
+                    <td className="mono">{g.agents}</td>
+                    <td className="mono">{signed(g.initial_mean)}</td>
+                    <td className="mono">{signed(g.final_mean)}</td>
+                    <td className="mono">{signed(g.delta)}</td>
+                    <td className="t-meta">{g.network_role}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <p className="t-meta m-0">
+          Computed {new Date(data.generated_at).toLocaleString()} from run {data.run_id}.
+        </p>
+      </div>
+    </section>
   );
 }
 
