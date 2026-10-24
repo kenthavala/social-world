@@ -252,24 +252,48 @@ def agent_id(ordinal: int, run_key: str = "") -> str:
 
 
 def initial_edges(agents: list[dict], rng: random.Random) -> dict[str, dict]:
-    """Follow graph: homophily 0.6 / shared group 0.2 / random 0.2 + preferential attachment."""
+    """Follow graph: homophily 0.6 / shared group 0.2 / random 0.2 + preferential attachment.
+
+    The lookups below are precomputed: the original implementation called
+    `_stance_dist`/`_group_of`/`_archetype_rank` inside the sort key, and each of
+    those scanned the whole agent list, making seeding O(n^3 log n). Stance
+    distances for the current agent are computed once (O(n)) and the RNG calls are
+    made in exactly the same order, so the graph is byte-identical for a seed.
+    """
     edges: dict[str, dict] = {}
-    from app.sim import relations, feed as feed_mod
+    from app.sim import relations
     ids = [a["id"] for a in agents]
+    by_id = {a["id"]: a for a in agents}
+    rank = {i: (1.0 if by_id[i]["archetype"] in ("expert", "journalist", "official") else 0.0)
+            for i in ids}
     in_degree = {i: 0 for i in ids}
     for a in agents:
         k = 3 + round(5 * a["big5"]["extraversion"])
         k = min(k, len(ids) - 1)
         picks: set[str] = set()
         others = [b for b in ids if b != a["id"]]
+        # One pass over this agent's stances instead of one scan per comparison.
+        dist: dict[str, float] = {}
+        for b in others:
+            tot, cnt = 0.0, 0
+            b_stances = by_id[b]["stances"]
+            for iid, sv in a["stances"].items():
+                bv = b_stances.get(iid, {}).get("value", 0.0)
+                tot += abs(sv["value"] - bv)
+                cnt += 1
+            dist[b] = tot / max(1, cnt)
         while len(picks) < k and others:
             mode = rng.random()
             if mode < 0.6:
-                # stance-similarity sampling: pick by smallest |diff| with noise
-                by_sim = sorted(others, key=lambda b: _stance_dist(a, b, agents) + 0.1 * rng.random())
-                target = next((b for b in by_sim if b not in picks), None)
+                # stance-similarity sampling: pick by smallest |diff| with noise.
+                # The key list is built in `others` order so the RNG sequence is the
+                # same one the scan-based implementation consumed.
+                keyed = [(dist[b] + 0.1 * rng.random(), b) for b in others]
+                keyed.sort(key=lambda kv: kv[0])
+                target = next((b for _k, b in keyed if b not in picks), None)
             elif mode < 0.8:
-                same_group = [b for b in others if _group_of(b, agents) == a["group"] and b not in picks]
+                same_group = [b for b in others if by_id[b]["group"] == a["group"]
+                              and b not in picks]
                 target = rng.choice(same_group) if same_group else None
             else:
                 pool = [b for b in others if b not in picks]
@@ -277,7 +301,7 @@ def initial_edges(agents: list[dict], rng: random.Random) -> dict[str, dict]:
             if target is None:
                 continue
             # preferential attachment boost for visible archetypes
-            if _archetype_rank(target, agents) and rng.random() < 0.3 * _archetype_rank(target, agents):
+            if rank[target] and rng.random() < 0.3 * rank[target]:
                 # add another label to highly-followed accounts proportionally
                 popular = sorted(in_degree.items(), key=lambda kv: -kv[1])
                 candidates = [b for b, d in popular if d > 0 and b not in picks and b != a["id"]]

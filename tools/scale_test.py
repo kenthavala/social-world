@@ -32,6 +32,9 @@ TEXT = (
 ) * 30
 
 TICKS = 10
+# Posts per tick. 4 is the default; set SCALE_WRITES_PER_TICK=50 for the
+# realistic-volume run (10 ticks x 50 = 500+ posts).
+WRITES = int(os.environ.get("SCALE_WRITES_PER_TICK", "4"))
 
 
 def make_brief(n_issues: int = 5, n_groups: int = 6) -> dict:
@@ -59,7 +62,7 @@ async def measure(agents: int) -> dict:
     sid = src["source_id"]
     db.execute("UPDATE sources SET brief_json=? WHERE id=?", (db.j(make_brief()), sid))
 
-    cfg = {"agents": agents, "ticks": TICKS, "writes_per_tick": 4, "seed": 4242,
+    cfg = {"agents": agents, "ticks": TICKS, "writes_per_tick": WRITES, "seed": 4242,
            "pop_mix": {"pro": 0.34, "con": 0.33, "undecided": 0.33},
            "max_llm_calls": 100000, "write_batch": 3, "reflect_every": 5, "backfire": True}
     run_id = f"run_scale_{agents}"
@@ -74,12 +77,17 @@ async def measure(agents: int) -> dict:
     size_before = db_path.stat().st_size if db_path.exists() else 0
 
     from app.llm.gateway import gateway
-    tracemalloc.start()
+    # Seeding is timed WITHOUT tracemalloc: allocation tracing adds a large,
+    # Python-call-count-proportional overhead to the pure-Python parts, which made
+    # earlier seeding numbers (e.g. 24.7 s at 500 agents) mostly measure the tracer.
+    # Memory is traced around the tick loop, which is where the population-held
+    # state actually grows.
     t0 = time.perf_counter()
     await engine.seed_run(run_id, gateway)
     seed_s = time.perf_counter() - t0
 
     ctx = await engine.load_context(run_id)
+    tracemalloc.start()
     t1 = time.perf_counter()
     per_tick = []
     for tick in range(1, TICKS + 1):
@@ -135,7 +143,9 @@ async def measure(agents: int) -> dict:
 
 async def main() -> None:
     sizes = [int(x) for x in sys.argv[1:]] or [24, 100]
-    print(f"engine: {sys.version.split()[0]} · ticks={TICKS} · provider=mock · db={DATA}")
+    print(f"engine: {sys.version.split()[0]} · ticks={TICKS} · writes/tick={WRITES} "
+          f"· provider=mock · db={DATA}")
+    print("seed_s excludes tracemalloc overhead; peakMB is traced across the ticks only.")
     print()
     print(f"{'agents':>7} {'seed_s':>7} {'tick_avg':>9} {'tick_max':>9} {'posts':>7} "
           f"{'edges':>7} {'analytics':>10} {'report':>8} {'db_dMB':>7} {'peakMB':>7}")
