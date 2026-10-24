@@ -401,3 +401,178 @@ The `iss_1` label is the name the spec typed in Step 4, so the report now eviden
 - Run completed in 2.5s (did not exceed 5-minute watchdog), so OPENCODE_API_KEY fallback was not triggered per instructions.
 - Without a real provider key and current model, M1-B acceptance criterion cannot be satisfied.
 
+
+### E020: E2E reuses a persistent data dir, so tests start from stale state
+- **Files:** `start-e2e.bat`; first surfaced in the Phase 1 continuation rerun of
+  `npx playwright test`
+- **Reproduction:** run the E2E suite twice. The first run uploads sample_source.txt; later runs find a
+  source that already has a brief. setupRun then takes the "Review the scenario" path, which advances
+  step 1 -> step 2, and waits for text that only appears on step 3. Every run-dependent test fails at a
+  30s timeout (full suite took 10.5m); the 12 static-page tests still pass.
+- **Root cause:** start-e2e.bat deliberately uses %TEMP%\oasis-e2e-data (never the user's DB) but
+  never clears it between sessions, while the suite's documented conditions are "a cleared data dir".
+- **Fix:** the launcher now clears the E2E data dir at startup (
+d /s /q before mkdir).
+- **Verification:** rerun on a cleared dir: no stale-source branch is taken anywhere in the suite.
+
+### E021: E2E locators encode pre-8-step wizard geometry (strict-mode violations)
+- **Files:** `frontend/e2e/phase1-dod.spec.ts`, `frontend/e2e/m2-ui.spec.ts`,
+  `frontend/e2e/screenshots.spec.ts`, `frontend/tools/bug_hunt.mjs`
+- **Reproduction:** on a FRESH dir the same tests fail within seconds instead of timing out:
+  getByRole('button', name: /(?:Draft|Review) the scenario/i) resolves to THREE elements
+  ("3 Issues Draft the scenario first" [rail, disabled], "4 Stakeholders Draft the scenario first",
+  and the real nav button), so expect(...).toBeVisible() throws a strict-mode violation immediately.
+- **Root cause:** commit 7a824d6 (8-step wizard) plus its preflight refinements changed both the rail
+  buttons' accessible names (now "<n> <Label> <status>", whose empty-state suffix repeats the nav's wording)
+  and the nav labels ("Review issues", "Review stakeholders", "Set up the population", "Simulation
+  settings", "Review", "Continue to launch"). The DoD criteria did not change. E016-era spec fixes were
+  verified before that commit and the suite was never re-run afterwards.
+- **Fix (tests only; every assertion kept):** exact-name matches against the nav ("Draft the scenario",
+  "Review the scenario", "Draft the brief", "Review issues", "Simulation settings", "Review",
+  "Continue to launch", "Start run"), rail jumps anchored as /^<n> <Label>/, and the agents count now
+  asserted directly with expect(slider).toHaveValue('16') after fill('16') - the same invariant the old
+  /16 agents/ text probe verified. phase1-dod additionally asserts the new "Pre-launch check" panel is
+  visible on the Review step.
+- **Verification:** full suite `npx playwright test` -> 34 passed (1.7m), 0 failed, 0 flaky, 0 skipped (both projects), 24 Oct 2026.
+
+### E022: Renumbering issue ids silently re-pointed every stakeholder group's stance
+- **Files:** `frontend/src/Wizard.tsx` (`removeIssue`, `duplicateIssue`, `moveIssue`, `addIssue`)
+- **Reproduction:** generate a brief (the mock proposes 7 issues), delete the second issue on the
+  Review issues step, save, launch. Each group's `stance_by_issue` still held the old keys, which
+  `iss_2..iss_N` now named *different* issues; `backend/app/sim/seeding.py:109` resolves a group's
+  starting position by issue id, so the groups were seeded on positions that were never theirs.
+- **Root cause:** the builders renumber ids positionally (`iss_${idx + 1}`) but none of them remapped
+  the dependent `stance_by_issue` maps. Deleting or reordering an issue shifted every id after it.
+- **Fix:** one `commitIssues(next, fromIdx)` path renumbers the ids *and* remaps each group's stance by
+  issue identity. An added or duplicated issue gets no recorded stance rather than inheriting a
+  neighbour's, so "unstated" is never turned into a fabricated position.
+- **Verification:** `npx playwright test wizard-integrity.spec.ts --project=chromium-desktop` -> 1 passed (11.5s): a deleted issue's positions do not move to another issue, and no stance key survives for a deleted id.
+
+### E023: E2E setups assumed a generated brief can never exceed the requested issue count
+- **Files:** `frontend/e2e/phase1-dod.spec.ts`, `frontend/e2e/m2-ui.spec.ts`,
+  `frontend/e2e/screenshots.spec.ts`, new `frontend/e2e/wizard-counts.ts`
+- **Reproduction:** a fresh run fails in `setupM2Run` at
+  `expect(locator('span.t-id:has-text("iss_")')).toHaveCount(5)` with `Received: 7`. The setup only
+  ever *added* issues until it reached 5, so a brief with more than 5 could never satisfy the count.
+- **Root cause:** `max_issues`/`max_groups` bound only the deterministic fallback
+  (`backend/app/ingest/brief.py:93`); an LLM or mock brief is returned as proposed because truncating
+  it would silently delete configured issues (the D017 rule). The specs encoded the old assumption.
+- **Fix (tests only; every assertion kept):** a shared `normaliseIssues`/`normaliseGroups` helper adds
+  *or removes* rows until the target count is reached and then asserts that same count. The target
+  (5 issues / 6 groups) and every downstream assertion are unchanged.
+- **Verification:** full suite `npx playwright test` -> 34 passed (1.7m), 0 failed, 0 flaky, 0 skipped.
+
+### E024: The E2E data-dir clear was unguarded and could silently run on stale data
+- **Files:** `start-e2e.bat`
+- **Reproduction:** (a) clear `TEMP` before launching: the path collapses to `\oasis-e2e-data`, a
+  root-level recursive delete target; (b) hold the data dir as a process's working directory: `rd /s /q`
+  exits 32, the directory survives, and the launcher continued against the previous session's data.
+- **Root cause:** E020's fix deleted `%TEMP%\oasis-e2e-data` with no path guard and no post-delete check.
+- **Fix:** the resolved path must equal exactly `<resolved TEMP>\oasis-e2e-data` or the launcher aborts;
+  after `rd`, a surviving directory aborts with the likely cause; a missing/uncreatable dir aborts.
+- **Verification:** wrong path, empty path and `%TEMP%\..\oasis-e2e-data` each abort with the expected
+  message (exit 1); the correct path and a `..` form that resolves to it are allowed (exit 0). With a
+  process CWD inside the dir, `rd` reports "being used by another process" (exit 32) and the directory
+  remains, so the abort branch fires. An open SQLite connection does NOT block the delete
+  (FILE_SHARE_DELETE), so that case is not claimed.
+
+### E025: The Findings "raw counts" control revealed an empty element
+- **Files:** `frontend/src/run/FindingsView.tsx`
+- **Reproduction:** open a completed run -> Findings -> toggle "Show the raw counts behind these findings".
+  The control changed its label but the panel stayed blank.
+- **Root cause:** the toggle rendered `<div id="counted-detail" />` with no children (since 1647562).
+- **Fix:** `CountedDetail` now renders the counted scale, stance by issue, stance by group and provenance
+  tables, all from the narrative response.
+- **Verification:** headless Chromium on a completed run: the toggle exists, `#counted-detail` is
+  visible, and it renders 13 table rows covering Scale, Stance by issue and Stance by stakeholder
+  group plus the provenance line; 0 console errors. Visual QA (50 screenshots, 5 viewports) reports
+  "No problems detected".
+
+### E026: The brief sanitizer invented a neutral position for every unstated issue
+- **Files:** `backend/app/ingest/brief.py` (`_sanitize_brief`), `frontend/src/Wizard.tsx`
+- **Reproduction:** save a group whose `stance_by_issue` omits `iss_3`; read the brief back and `iss_3`
+  is `0.0`. A group that never stated a position was stored as neutral, and the fabrication also
+  defeated E022's "added issues stay unstated" rule.
+- **Root cause:** `.get(issue["id"], 0.0)` filled every missing key.
+- **Fix:** only stated positions are stored (clamped to [-1, 1]); seeding keeps its documented default
+  at use time. The wizard's stance inputs show a blank ("-") for an unstated position and delete the
+  key when cleared.
+- **Verification:** `pytest tests -q -k "brief or stance or sanitiz"` -> 14 passed, exit 0.
+
+### E027: Four E2E tests and one screenshot test targeted UI that no longer exists
+- **Files:** `frontend/e2e/m2-ui.spec.ts`, `frontend/e2e/screenshots.spec.ts`
+- **Reproduction:** "Log tab renders" clicked a /Log/ tab (RUN_TABS has none) and each test burned its
+  full 600s timeout; "Inject events" required an intervention on a completed run, where the control is
+  correctly disabled; "Model list free filter" option-clicked a closed native select and looked for a
+  model combobox that is a text input; "Fallback provider switch" looked for a `switch` role and a
+  Settings button (the nav is a link, the fallback is a select); the screenshot test clicked /Log/.
+- **Root cause:** the UI was restructured (drawers, native selects, RUN_TABS) and these specs were never
+  re-pointed; E021 fixed the wizard selectors only.
+- **Fix (tests only, assertions preserved or strengthened):** the log test opens the Run details drawer
+  and still asserts the LLM-calls heading plus a non-empty table; the intervention test creates a DRAFT
+  run and asserts the SCHEDULED row appears; the model-filter test compares the option counts against
+  the API's own `models`/`free_only` response; the fallback test saves, reloads and asserts the value
+  persisted, then restores it; the screenshot test opens the drawer before shooting.
+- **Verification:** `npx playwright test m2-ui.spec.ts --project=chromium-desktop` -> 6 passed (31.9s).
+
+### E028: Findings printed the raw token "not_validated" as its accuracy statement
+- **Files:** `frontend/src/run/FindingsView.tsx`
+- **Reproduction:** Counted detail -> "Predictive accuracy: not_validated."
+- **Root cause:** the API returns a machine token and the view interpolated it directly.
+- **Fix:** renders "not validated - no accuracy figure is claimed for this run." and leaves other values
+  untouched.
+- **Verification:** headless Chromium: the Findings body contains "not validated — no accuracy figure
+  is claimed for this run." and no occurrence of the raw token `not_validated`.
+
+### E029: The Home document list used the wrong id field, so React logged a key warning on every page
+- **Files:** `frontend/src/HomePage.tsx`, `frontend/src/types.ts`
+- **Reproduction:** load Home with at least one source. The console logs `Warning: Each child in a list
+  should have a unique "key" prop ... Check the render method of HomePage` with the element `at a`, at
+  all five QA viewports (5/5 problems in the visual-QA report).
+- **Root cause:** `GET /api/sources` (list) returns `id`; only `GET /api/sources/{id}` (detail) returns
+  `source_id`. `HomePage` keyed the document list with `key={d.source_id}`, which is always `undefined`
+  for list rows. `SourceStats` declared `source_id: string`, so TypeScript could not catch it. Every
+  other consumer (`DocumentsPage`, `Wizard`) already read `d.id ?? d.source_id`.
+- **Fix:** `SourceStats` now declares the optional `id` and documents the two response shapes; HomePage
+  keys with `d.id ?? d.source_id`.
+- **Verification:** re-ran the console capture across all six routes: no key warning at all (exit 0);
+  `npx tsc --noEmit` exit 0; visual QA -> "No problems detected" (was 5 problems); bug hunt -> 22
+  passed, 0 failed.
+
+### E030: The Findings provenance line printed double full stops
+- **Files:** `frontend/src/run/FindingsView.tsx`
+- **Reproduction:** open Findings -> Counted detail: `...No model call produced this text.. Predictive
+  accuracy: not validated — no accuracy figure is claimed for this run..`
+- **Root cause:** the stored method string already ends with a period, and the rendered sentence ended
+  with one too, while the JSX appended a literal `.` after both.
+- **Fix:** the sentence now ends where the strings end.
+- **Verification:** headless read of the rendered paragraph: `... produced this text. Predictive accuracy:
+  not validated — no accuracy figure is claimed for this run.` (single stops).
+
+### E031: The report header named a model for a mock run
+- **Files:** `backend/app/analytics/report_doc.py`
+- **Reproduction:** open the report of the mock QA run: `| **Provider** | mock / nvidia/nemotron-3-ultra-550b-a55b |`.
+  A mock run never calls a model, so the header implies a model produced the posts.
+- **Root cause:** the header always interpolated `provider.model` from the recorded config, and the
+  config keeps the last selected model even when the provider is `mock`.
+- **Fix:** when the provider is `mock`, the model cell reads "not used by mock" (the Quality tab already
+  said this).
+- **Verification:** `pytest tests/test_invariants.py -k report_is_traceable` asserts "not used by mock"
+  in a mock run's report.
+
+### E032: The screenshots spec clicked an ambiguous "Connections" during a viewport resize
+- **Files:** `frontend/e2e/screenshots.spec.ts`
+- **Reproduction:** full suite on 24 Oct 2026, `mobile-chrome` project, "Visual QA: Run page -
+  Network tab": `locator.click: Error: strict mode violation: getByRole('button', { name: /Connections/ })
+  resolved to 2 elements` - one in `navigation "Run views"` (desktop tabs) and one in
+  `navigation "Run sections"` (mobile bottom bar). The same test passed in the preceding run, so it is a
+  race, not a fixed break.
+- **Root cause:** the test navigated at the mobile project viewport, then called
+  `setViewportSize({width: 1440})` and clicked immediately. The mobile bar is mounted from React state
+  driven by a resize listener, so it survives for a tick after the resize; the desktop tabs are already
+  in the DOM (CSS-hidden on mobile). During that window both buttons carry the accessible name
+  "Connections", and the unscoped `/Connections/` locator matches both.
+- **Fix (test only; the click and the screenshots are unchanged):** scope the click to
+  `getByRole('navigation', { name: 'Run views' })`, the navigation that is the target at 1440px.
+- **Verification:** `npx playwright test screenshots.spec.ts --project=mobile-chrome` -> 9 passed,
+  exit 0; full suite -> 34 passed, 0 failed, exit 0.
