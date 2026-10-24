@@ -92,8 +92,15 @@ export function uploadSourceText(text: string, filename = "pasted.txt"): Promise
 
 export const getSource = (id: string) => call<SourceStats>(`/api/sources/${id}`);
 
-export const generateBrief = (id: string, scenario: string) =>
-  call<{ brief: WorldBrief }>(`/api/sources/${id}/brief`, json("POST", { scenario }));
+export const generateBrief = (
+  id: string,
+  scenario: string,
+  hints?: { max_issues?: number; max_groups?: number },
+) =>
+  call<{ brief: WorldBrief }>(
+    `/api/sources/${id}/brief`,
+    json("POST", { scenario, ...(hints ?? {}) }),
+  );
 
 export const updateBrief = (id: string, brief: WorldBrief) =>
   call<{ brief: WorldBrief }>(`/api/sources/${id}/brief`, json("PUT", { brief }));
@@ -186,13 +193,30 @@ export const getMetrics = (id: string) => call<MetricsResponse>(`/api/runs/${id}
 
 export const getFindings = (id: string) => call<FindingsResponse>(`/api/runs/${id}/findings`);
 
+export const getNarrative = (id: string) =>
+  call<import("./types").NarrativeResponse>(`/api/runs/${id}/narrative`);
+
 export const getRealism = (id: string) =>
   call<{
     run_id: string;
     overall: { score: number | null; label: string; assessed_dimensions: number; total_dimensions: number; method: string };
+    summary: {
+      headline: string;
+      strong: { id: string; label: string; score: number | null }[];
+      attention: { id: string; label: string; score: number | null }[];
+      not_assessed: { id: string; label: string; status: string; requires: string }[];
+      actions: {
+        dimension: string; label: string; group: string; score: number | null;
+        recommendation: string; requires: string;
+      }[];
+    };
     predictive_accuracy: { status: string; label: string; observations: number; message: string };
     validation: { connected: boolean; datasets: number; observations: number; message: string };
-    dimensions: { id: string; label: string; group: string; weight: number; status: string; score: number | null; explanation: string; evidence: Record<string, unknown> }[];
+    dimensions: {
+      id: string; label: string; group: string; weight: number; status: string;
+      score: number | null; explanation: string; evidence: Record<string, unknown>;
+      recommendation: string; requires: string;
+    }[];
     updated_at: string;
   }>(`/api/runs/${id}/realism`);
 

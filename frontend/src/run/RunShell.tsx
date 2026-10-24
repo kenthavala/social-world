@@ -446,19 +446,21 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
 
       {isMobile && (
         <nav aria-label="Run sections" className="fixed bottom-0 left-0 right-0 z-30 grid border-t"
-             style={{ gridTemplateColumns: "0.8fr repeat(4, 1fr)", background: "var(--bg-0)",
-                      borderColor: "var(--line-1)" }}>
+             style={{ gridTemplateColumns: `0.9fr repeat(${RUN_TABS.length}, 1fr)`,
+                      background: "var(--bg-0)", borderColor: "var(--line-1)" }}>
           <button className="flex flex-col items-center justify-center gap-1"
-                  style={{ height: 58, fontSize: 10.5, color: "var(--fg-3)" }} onClick={onBack}>
-            <ChevronLeft size={17} /> Back
+                  style={{ height: 56, fontSize: 10, color: "var(--fg-3)", minWidth: 0 }} onClick={onBack}>
+            <ChevronLeft size={16} /> <span className="truncate">Back</span>
           </button>
           {RUN_TABS.map((t) => (
             <button key={t.key} onClick={() => changeTab(t.key)}
                     className="flex flex-col items-center justify-center gap-1"
-                    style={{ height: 58, fontSize: 10.5, fontWeight: 500,
+                    style={{ height: 56, fontSize: 10, fontWeight: 500, minWidth: 0,
                              color: tab === t.key ? "var(--fg-1)" : "var(--fg-3)" }}
                     aria-current={tab === t.key ? "page" : undefined}>
-              {t.key === "live" && isActive ? "Live" : t.label}
+              <span className="truncate" style={{ maxWidth: "100%" }}>
+                {t.key === "live" && isActive ? "Live" : t.label}
+              </span>
             </button>
           ))}
         </nav>

@@ -31,6 +31,11 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError,
   const [sel, setSel] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "pro" | "neu" | "con">("all");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [issueFilter, setIssueFilter] = useState("all");
+  const [influenceFilter, setInfluenceFilter] = useState("all");
+  const [activityFilter, setActivityFilter] = useState<"all" | "active" | "silent">("all");
+  const [sort, setSort] = useState<"stance" | "activity" | "influence" | "name">("influence");
 
   useEffect(() => {
     api.listAgents(runId).then((a) => setAgents(a.agents)).catch((e) => onError(e));
@@ -55,12 +60,51 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError,
     if (filter !== "all") {
       out = out.filter((a) => CLS(meanStance(a)) === filter);
     }
+    if (groupFilter !== "all") {
+      out = out.filter((a) => (a.group || "") === groupFilter);
+    }
+    if (issueFilter !== "all") {
+      out = out.filter((a) => a.stances[issueFilter] !== undefined);
+    }
+    if (influenceFilter !== "all") {
+      const [lo, hi] = influenceFilter.split("-").map(Number);
+      out = out.filter((a) => {
+        const inf = a.influence ?? 0;
+        return inf >= lo && (hi === undefined || inf <= hi);
+      });
+    }
+    if (activityFilter !== "all") {
+      out = out.filter((a) => {
+        const n = activity.get(a.id)?.n ?? 0;
+        return activityFilter === "active" ? n > 0 : n === 0;
+      });
+    }
     if (q.trim()) {
       const n = q.toLowerCase();
       out = out.filter((a) => a.name.toLowerCase().includes(n) || a.handle.toLowerCase().includes(n) || (a.group || "").toLowerCase().includes(n));
     }
-    return out;
-  }, [agents, filter, q]);
+    const sorted = [...out];
+    sorted.sort((a, b) => {
+      if (sort === "name") return a.name.localeCompare(b.name);
+      if (sort === "activity") {
+        return (activity.get(b.id)?.n ?? 0) - (activity.get(a.id)?.n ?? 0);
+      }
+      if (sort === "influence") {
+        return (b.influence ?? 0) - (a.influence ?? 0);
+      }
+      return meanStance(b) - meanStance(a);
+    });
+    return sorted;
+  }, [agents, filter, groupFilter, issueFilter, influenceFilter, activityFilter, q, sort, activity]);
+
+  const groupOptions = useMemo(
+    () => (agents ? [...new Set(agents.map((a) => a.group).filter(Boolean))].sort() : []),
+    [agents]);
+  const issueOptions = useMemo(() => {
+    const ids = new Set<string>();
+    (agents ?? []).forEach((a) => Object.keys(a.stances).forEach((i) => ids.add(i)));
+    return [...ids].sort();
+  }, [agents]);
 
   if (!agents) return <Spinner label="Loading agents…" />;
 
@@ -88,6 +132,51 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError,
             onChange={(e) => setQ(e.target.value)}
           />
         </span>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="field" style={{ minWidth: 140 }}>
+          <span className="label">Stakeholder group</span>
+          <select className="input" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+            <option value="all">All groups</option>
+            {groupOptions.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </label>
+        <label className="field" style={{ minWidth: 120 }}>
+          <span className="label">Issue</span>
+          <select className="input" value={issueFilter} onChange={(e) => setIssueFilter(e.target.value)}>
+            <option value="all">All issues</option>
+            {issueOptions.map((i) => <option key={i} value={i}>{i}</option>)}
+          </select>
+        </label>
+        <label className="field" style={{ minWidth: 130 }}>
+          <span className="label">Influence</span>
+          <select className="input" value={influenceFilter} onChange={(e) => setInfluenceFilter(e.target.value)}>
+            <option value="all">Any</option>
+            <option value="0-2">Low (0–2)</option>
+            <option value="2-4">Medium (2–4)</option>
+            <option value="4-10">High (4+)</option>
+          </select>
+        </label>
+        <label className="field" style={{ minWidth: 120 }}>
+          <span className="label">Activity</span>
+          <select className="input" value={activityFilter}
+                  onChange={(e) => setActivityFilter(e.target.value as typeof activityFilter)}>
+            <option value="all">Any</option>
+            <option value="active">Posted</option>
+            <option value="silent">Never posted</option>
+          </select>
+        </label>
+        <label className="field" style={{ minWidth: 130 }}>
+          <span className="label">Sort by</span>
+          <select className="input" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+            <option value="influence">Influence</option>
+            <option value="activity">Posting activity</option>
+            <option value="stance">Current stance</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+        <span className="t-meta ml-auto">{shown.length} of {agents.length} agents</span>
       </div>
 
       {agents.length === 0 ? (
@@ -153,6 +242,7 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError,
           runId={runId}
           agentId={sel}
           runSourceId={runSourceId}
+          roundFilter={roundFilter}
           onClose={() => setSel(null)}
           onError={onError}
           bumpKey={bumpKey}
@@ -229,6 +319,8 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey, r
           ) : (
             <>
               {a.bio && <p className="t-body fg-2">{a.bio}</p>}
+
+              <AgentExplanation agent={a} detail={detail} />
 
               <Section title="Stances now">
                 <div className="flex flex-wrap gap-1.5">
@@ -369,6 +461,60 @@ function StanceHistoryCard({ series, maxTick }: {
         ))}
       </LineChart>
     </ResponsiveContainer>
+  );
+}
+
+function AgentExplanation({ agent, detail }: { agent: Agent; detail: api.AgentDetail }) {
+  // Everything below is read from the recorded stance series and posts; the
+  // sentences are assembled from those facts, never generated.
+  const rows = Object.entries(detail.stance_history ?? {}).map(([issue, pts]) => {
+    const first = pts[0]?.value ?? 0;
+    const last = pts[pts.length - 1]?.value ?? 0;
+    return { issue, first, last, delta: last - first };
+  });
+  const movers = rows.filter((r) => Math.abs(r.delta) >= 0.1)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const mean = meanStance(agent);
+  const posts = detail.posts.length;
+  const cited = new Set(detail.posts.flatMap((p) => p.cited_chunk_ids ?? [])).size;
+  const influence = agent.influence;
+
+  return (
+    <div className="panel-2 p-3.5" style={{ borderLeft: "3px solid var(--accent)" }}>
+      <div className="eyebrow">Reading this agent</div>
+      <p className="t-body mt-1">
+        {agent.name} represents <strong>{agent.group}</strong>
+        {agent.group_description ? ` (${agent.group_description})` : ""}
+        {influence != null ? `, with configured influence ${influence}` : ""}. Their current
+        average position is <strong>{mean.toFixed(2)}</strong> on the −1…+1 stance scale.
+      </p>
+      {movers.length === 0 ? (
+        <p className="t-body fg-2 mt-1">
+          Their position did not move by 0.10 or more on any issue, so the record does not
+          support an explanation of change — they were stable across the run.
+        </p>
+      ) : (
+        <p className="t-body fg-2 mt-1">
+          They moved most on <strong>{movers[0].issue}</strong>, from{" "}
+          {movers[0].first.toFixed(2)} to {movers[0].last.toFixed(2)} (
+          {movers[0].delta > 0 ? "+" : ""}{movers[0].delta.toFixed(2)})
+          {movers.length > 1
+            ? `, with smaller shifts on ${movers.slice(1, 3).map((m) => m.issue).join(" and ")}.`
+            : "."}
+        </p>
+      )}
+      <p className="t-body fg-2 mt-1">
+        They wrote {posts} post{posts === 1 ? "" : "s"}
+        {cited > 0 ? ` citing ${cited} distinct source passage${cited === 1 ? "" : "s"}` : " with no recorded citation"}
+        {detail.memories?.length
+          ? `, and hold ${detail.memories.length} recorded memory item${detail.memories.length === 1 ? "" : "s"}.`
+          : "."}
+      </p>
+      <p className="t-meta mt-1">
+        The simulation records stance changes with their trigger where the engine attributed one;
+        it does not record why an unattributed change happened, so none is claimed here.
+      </p>
+    </div>
   );
 }
 

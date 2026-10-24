@@ -55,6 +55,8 @@ interface RealismDimension {
   score: number | null;
   explanation: string;
   evidence: Record<string, unknown>;
+  recommendation?: string;
+  requires?: string;
 }
 
 export default function QualityTab({ run, runId, onError }: QualityTabProps) {
@@ -79,6 +81,18 @@ export default function QualityTab({ run, runId, onError }: QualityTabProps) {
     return () => { cancelled = true; };
   }, [runId, onError]);
 
+  // Every hook must run on every render: the loading and empty states return
+  // further down, AFTER this memo. Returning before a hook was what produced
+  // "rendered more hooks than during the previous render" on first load.
+  const grouped = useMemo(() => {
+    const m = new Map<string, RealismDimension[]>();
+    for (const d of data?.dimensions ?? []) {
+      if (!m.has(d.group)) m.set(d.group, []);
+      m.get(d.group)!.push(d);
+    }
+    return m;
+  }, [data]);
+
   if (busy) return <div className="flex items-center justify-center h-64"><Spinner label="Loading quality assessment…" /></div>;
   if (!data) return <div className="panel p-6"><p className="t-meta">Unable to load quality data.</p></div>;
 
@@ -86,16 +100,7 @@ export default function QualityTab({ run, runId, onError }: QualityTabProps) {
   const dimensions = data.dimensions;
   const accuracy = data.predictive_accuracy;
   const validation = data.validation;
-
-  // Group dimensions by group
-  const grouped = useMemo(() => {
-    const m = new Map<string, RealismDimension[]>();
-    for (const d of dimensions) {
-      if (!m.has(d.group)) m.set(d.group, []);
-      m.get(d.group)!.push(d);
-    }
-    return m;
-  }, [dimensions]);
+  const summary = data.summary;
 
   const toggleGroup = (group: string) => {
     setExpanded((prev) => ({ ...prev, [group]: !prev[group] }));
@@ -167,16 +172,105 @@ export default function QualityTab({ run, runId, onError }: QualityTabProps) {
             </div>
           </div>
 
-          {/* Legend */}
+          {/* Legend — single column: this card is ~320px wide, so a multi-column
+              grid forced the labels outside the panel. */}
           <div className="panel-2 p-4">
             <h3 className="eyebrow mb-3">Status legend</h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="flex flex-col gap-2">
               <LegendItem status="assessed" />
               <LegendItem status="partial" />
               <LegendItem status="not_assessed" />
               <LegendItem status="not_connected" />
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* --- Diagnostic summary + how to improve --- */}
+      <section className="panel" aria-labelledby="improve-h">
+        <div className="panel-head">
+          <h2 id="improve-h" className="t-h2">How can I improve this simulation?</h2>
+          <span className="t-meta">Ordered by how much each gap affects the score</span>
+        </div>
+        <div className="panel-body flex flex-col gap-4">
+          <p className="t-body" style={{ maxWidth: 760 }}>{summary.headline}</p>
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <div className="panel-2 p-3.5">
+              <div className="eyebrow" style={{ color: "var(--pro-fg)" }}>What is strong</div>
+              {summary.strong.length === 0 ? (
+                <p className="t-meta mt-1">No dimension scored 75 or above.</p>
+              ) : (
+                <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
+                  {summary.strong.map((s) => (
+                    <li key={s.id} className="t-body fg-2 flex items-baseline justify-between gap-3">
+                      <span>{s.label}</span>
+                      <span className="mono" style={{ color: "var(--pro-fg)" }}>{s.score}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="panel-2 p-3.5">
+              <div className="eyebrow" style={{ color: "var(--warn-fg)" }}>What needs attention</div>
+              {summary.attention.length === 0 ? (
+                <p className="t-meta mt-1">Nothing scored below 60.</p>
+              ) : (
+                <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
+                  {summary.attention.map((s) => (
+                    <li key={s.id} className="t-body fg-2 flex items-baseline justify-between gap-3">
+                      <span>{s.label}</span>
+                      <span className="mono" style={{ color: "var(--warn-fg)" }}>{s.score}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="panel-2 p-3.5">
+              <div className="eyebrow">What could not be assessed</div>
+              {summary.not_assessed.length === 0 ? (
+                <p className="t-meta mt-1">Every dimension had enough data.</p>
+              ) : (
+                <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
+                  {summary.not_assessed.slice(0, 6).map((s) => (
+                    <li key={s.id} className="t-meta" title={s.requires}>
+                      {s.label} — <span className="fg-3">{s.status.replace("_", " ")}</span>
+                    </li>
+                  ))}
+                  {summary.not_assessed.length > 6 && (
+                    <li className="t-meta">+{summary.not_assessed.length - 6} more below</li>
+                  )}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {summary.actions.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="eyebrow">Recommended actions</div>
+              {summary.actions.map((a) => (
+                <div key={a.dimension} className="panel-2 p-3.5"
+                     style={{ borderLeft: "3px solid var(--warn-fg)" }}>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="t-h4">{a.label}</span>
+                    <span className="badge">{a.group} · {a.score ?? "—"}/100</span>
+                  </div>
+                  <p className="t-body mt-1">{a.recommendation}</p>
+                  {a.requires && (
+                    <p className="t-meta mt-1">Would make measurable: {a.requires}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="t-meta">
+            None of these actions change what this run already recorded. They describe how a
+            future run could be configured better. Improving the score does not create
+            real-world predictive accuracy.
+          </p>
         </div>
       </section>
 
@@ -219,12 +313,12 @@ function LegendItem({ status }: { status: string }) {
     not_connected: "Not connected — validation data required",
   };
   return (
-    <div className="flex items-center gap-2 p-2" style={{ background: "var(--bg-1)", borderRadius: "var(--r-2)" }}>
-      <span className={`status ${status === "assessed" ? "status-assessed" : status === "partial" ? "status-partial" : status === "not_connected" ? "status-not-connected" : "status-not-assessed"}`} style={{ fontSize: 11 }}>
+    <div className="flex items-start gap-2 p-2" style={{ background: "var(--bg-1)", borderRadius: "var(--r-2)" }}>
+      <span className={`status ${status === "assessed" ? "status-assessed" : status === "partial" ? "status-partial" : status === "not_connected" ? "status-not-connected" : "status-not-assessed"}`} style={{ fontSize: 11, flex: "0 0 auto" }}>
         <span className="dot" />
         {status.replace("_", " ")}
       </span>
-      <span className="t-meta" style={{ fontSize: 11 }}>{labels[status]}</span>
+      <span className="t-meta" style={{ fontSize: 11, minWidth: 0 }}>{labels[status]}</span>
     </div>
   );
 }
@@ -253,6 +347,15 @@ function DimensionCard({ dim }: { dim: RealismDimension }) {
         </div>
       </div>
       <p className="t-body fg-2" style={{ fontSize: 13 }}>{dim.explanation}</p>
+      {dim.recommendation && (
+        <div className="panel-2 p-2.5" style={{ background: "var(--bg-0)" }}>
+          <div className="eyebrow">How to improve</div>
+          <p className="t-body fg-2 mt-1" style={{ fontSize: 12.5 }}>{dim.recommendation}</p>
+          {dim.requires && (
+            <p className="t-meta mt-1">Becomes measurable when: {dim.requires}</p>
+          )}
+        </div>
+      )}
       {dim.evidence && Object.keys(dim.evidence).length > 0 && (
         <details className="mt-2">
           <summary className="t-meta cursor-pointer select-none">Evidence</summary>

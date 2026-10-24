@@ -6,11 +6,12 @@ import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Download, FileJson, FileText, FolderArchive, Sparkles, X } from "lucide-react";
-import type { Finding, FindingRow, FindingsResponse, Post, RunDetail } from "../types";
+import type { Finding, FindingRow, FindingsResponse, NarrativeResponse, Post, RunDetail } from "../types";
 import * as api from "../api";
 import { GeneratedTag, Spinner, useFocusTrap } from "../common";
 import { chunkInfo, deriveStats, initials, postOverallStance, subscribeChunks } from "./helpers";
 import type { EssaySummary } from "../api";
+import FindingsView from "./FindingsView";
 
 const ESSAY_LABELS: [string, string][] = [
   ["executive_summary", "Headline"],
@@ -96,6 +97,7 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
   const [essayBusy, setEssayBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [findings, setFindings] = useState<FindingsResponse | null>(null);
+  const [narrative, setNarrative] = useState<NarrativeResponse | null>(null);
   const [finding, setFinding] = useState<{ title: string; ids: string[] } | null>(null);
   const [, force] = useState(0);
 
@@ -104,6 +106,7 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
   useEffect(() => {
     api.getMetrics(runId).then(setMetrics as never).catch(() => setMetrics(null));
     api.getFindings(runId).then(setFindings).catch(() => setFindings(null));
+    api.getNarrative(runId).then(setNarrative).catch(() => setNarrative(null));
   }, [runId, bumpKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -180,13 +183,27 @@ export default function AnalysisTab({ run, posts, runId, bumpKey, onError }: {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-1.5">
-          <h2 className="t-h1">Findings</h2>
+      {/* The briefing: computed answers first, supporting numbers below. */}
+      {narrative ? (
+        <FindingsView data={narrative} />
+      ) : (
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex flex-col gap-1.5">
+            <h2 className="t-h1">Findings</h2>
+            <p className="t-meta">
+              Counted from the {posts.length} recorded post{posts.length === 1 ? "" : "s"} in this run.
+            </p>
+          </div>
+          <span className="t-id">as of {asOf} UTC</span>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="t-h2">Supporting detail</h3>
           <p className="t-meta">
-            Counted from the {posts.length} recorded post{posts.length === 1 ? "" : "s"} in this run.
-            Every count shows its denominator and opens the posts behind it. The only generated
-            text is the executive-summary draft, labelled where it appears.
+            The charts and tables the briefing above was computed from. Every count shows its
+            denominator and opens the posts behind it.
           </p>
         </div>
         <span className="t-id">as of {asOf} UTC</span>

@@ -1,8 +1,11 @@
-// Connections: recorded follows and replies, grouped when the population is large.
-// Nothing is inferred from stance similarity; edges exist only where the engine
-// wrote a relationship row.
+// Connections: a selectable view of the relationships the engine recorded.
+//
+// The graph is never the only way to reach an entity: a synchronized list beside it
+// offers the same agents and groups as buttons, so selection works without precise
+// clicking on a canvas and without a mouse. Nothing here is inferred from stance
+// similarity — an edge exists only where the engine wrote a relationship row.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, Minus, Plus, Search, X } from "lucide-react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import type { GraphNode, GraphResponse } from "../types";
 import * as api from "../api";
@@ -16,10 +19,21 @@ interface NetNode extends GraphNode {
 }
 interface NetLink { source: string | NetNode; target: string | NetNode; weight: number }
 
+type Selection =
+  | { kind: "agent"; id: string }
+  | { kind: "group"; name: string }
+  | { kind: "edge"; src: string; dst: string }
+  | null;
+
 const stanceColor = (v: number) =>
   v > 0.15 ? "#2EBBA8" : v < -0.15 ? "#F0883A" : "#8D99AA";
 const NODE_TEXT = "rgba(128,137,148,0.95)";
 const LINK_COLOR = "rgba(141,153,170,0.45)";
+
+const linkEnds = (l: NetLink): [string, string] => [
+  typeof l.source === "object" ? (l.source as NetNode).id : l.source,
+  typeof l.target === "object" ? (l.target as NetNode).id : l.target,
+];
 
 export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter, onSelectRound }: {
   runId: string;
@@ -30,12 +44,19 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
   onSelectRound?: (round: number | null) => void;
 }) {
   const [graph, setGraph] = useState<GraphResponse | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<Selection>(null);
+  const [picked, setPicked] = useState<string[]>([]);
   const [view, setView] = useState<"agents" | "groups" | "matrix">("agents");
+  const [panel, setPanel] = useState<"detail" | "list">("list");
+  const [query, setQuery] = useState("");
+  const [stanceFilter, setStanceFilter] = useState<"all" | "pro" | "con" | "neu">("all");
+  const [linkFilter, setLinkFilter] = useState<"all" | "strong" | "weak">("all");
+  const [scope, setScope] = useState<"all" | "same" | "cross">("all");
   const [canvasW, setCanvasW] = useState(840);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
   const viewTouched = useRef(false);
+  const fitted = useRef(false);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -48,12 +69,19 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
 
   useEffect(() => {
     const q = roundFilter == null ? "" : `?tick=${roundFilter}`;
+    fitted.current = false;
     api.getGraph(runId, q).then(setGraph).catch((e) => onError(e));
   }, [runId, roundFilter, bumpKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Force layout tuning. NOTE: this must NOT clear the selection — the previous
+  // implementation did, which made selection appear to vanish at random whenever
+  // the graph refreshed.
   useEffect(() => {
-    setSel(null);
-    const fg = fgRef.current as unknown as { d3Force?: (name: string) => { strength?: (n: number) => void; distance?: (n: number) => void } } | undefined;
+    const fg = fgRef.current as unknown as {
+      d3Force?: (name: string) => {
+        strength?: (n: number) => void; distance?: (n: number) => void;
+      };
+    } | undefined;
     fg?.d3Force?.("charge")?.strength?.(-180);
     fg?.d3Force?.("link")?.distance?.(55);
   }, [view, graph]);
@@ -62,6 +90,15 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
     if (!graph || viewTouched.current) return;
     setView(graph.nodes.length > 100 ? "matrix" : graph.nodes.length > 25 ? "groups" : "agents");
   }, [graph]);
+
+  // Fit again after the canvas has its final width: the first fit can run before
+  // the ResizeObserver has applied the real dimensions, which left the graph
+  // bunched into a corner of an oversized canvas.
+  useEffect(() => {
+    if (!graph || view === "matrix") return;
+    const t = window.setTimeout(() => fit(), 900);
+    return () => window.clearTimeout(t);
+  }, [graph, canvasW, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const degree = useMemo(() => {
     const d = new Map<string, number>();
@@ -79,9 +116,22 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
     degree: degree.get(n.id) ?? 0,
   })), [graph, degree]);
 
-  const links = useMemo(() => (graph?.edges ?? [])
-    .filter((e) => e.weight > 0 || e.follows)
-    .map((e) => ({ source: e.src, target: e.dst, weight: e.weight })), [graph]);
+  const groupOf = useMemo(
+    () => new Map(nodes.map((n) => [n.id, n.group || "unassigned"])),
+    [nodes]);
+
+  const links = useMemo(() => {
+    let rows = (graph?.edges ?? []).filter((e) => e.weight > 0 || e.follows);
+    if (linkFilter === "strong") rows = rows.filter((e) => e.weight >= 0.5);
+    if (linkFilter === "weak") rows = rows.filter((e) => e.weight < 0.5);
+    if (scope !== "all") {
+      rows = rows.filter((e) => {
+        const same = groupOf.get(e.src) === groupOf.get(e.dst);
+        return scope === "same" ? same : !same;
+      });
+    }
+    return rows.map((e) => ({ source: e.src, target: e.dst, weight: e.weight }));
+  }, [graph, linkFilter, scope, groupOf]);
 
   const groupStats = useMemo(() => {
     const m = new Map<string, { name: string; members: string[]; sum: number; n: number }>();
@@ -111,10 +161,10 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
 
   const groupLinks: NetLink[] = useMemo(() => {
     const m = new Map<string, { source: string; target: string; weight: number }>();
-    const groupOf = new Map(nodes.map((n) => [n.id, n.group || "unassigned"]));
-    for (const e of graph?.edges ?? []) {
-      const a = groupOf.get(e.src);
-      const b = groupOf.get(e.dst);
+    for (const e of links) {
+      const [s, t] = linkEnds(e);
+      const a = groupOf.get(s);
+      const b = groupOf.get(t);
       if (!a || !b || a === b) continue;
       const key = `${a}|${b}`;
       const cur = m.get(key) ?? { source: `group:${a}`, target: `group:${b}`, weight: 0 };
@@ -122,22 +172,71 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
       m.set(key, cur);
     }
     return [...m.values()];
-  }, [graph, nodes]);
+  }, [links, groupOf]);
+
+  // Stance + search filtering applies to the list; the graph dims non-matches.
+  const visibleAgents = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return nodes.filter((n) => {
+      if (stanceFilter === "pro" && n.mean_stance <= 0.15) return false;
+      if (stanceFilter === "con" && n.mean_stance >= -0.15) return false;
+      if (stanceFilter === "neu" && Math.abs(n.mean_stance) >= 0.15) return false;
+      if (!q) return true;
+      return `${n.handle ?? ""} ${n.name ?? ""} ${n.group ?? ""}`.toLowerCase().includes(q);
+    }).sort((a, b) => b.degree - a.degree);
+  }, [nodes, stanceFilter, query]);
+
+  const matchIds = useMemo(() => new Set(visibleAgents.map((n) => n.id)), [visibleAgents]);
 
   const displayNodes = view === "groups" ? groupNodes : nodes;
   const displayLinks = view === "groups" ? groupLinks : links;
-  const selNode = useMemo(() => displayNodes.find((n) => n.id === sel) ?? null, [displayNodes, sel]);
+
+  // Selection is resolved against the CURRENT data; it is only dropped when the
+  // selected entity no longer exists (e.g. the round slider moved past it).
+  useEffect(() => {
+    if (!sel) return;
+    if (sel.kind === "agent" && !nodes.some((n) => n.id === sel.id)) setSel(null);
+    if (sel.kind === "group" && !groupStats.some((g) => g.name === sel.name)) setSel(null);
+    if (sel.kind === "edge") {
+      const exists = (graph?.edges ?? []).some(
+        (e) => e.src === sel.src && e.dst === sel.dst);
+      if (!exists) setSel(null);
+    }
+  }, [nodes, groupStats, graph, sel]);
+
+  const selAgent = sel?.kind === "agent" ? nodes.find((n) => n.id === sel.id) ?? null : null;
+  const selGroup = sel?.kind === "group"
+    ? groupStats.find((g) => g.name === sel.name) ?? null : null;
+  const selEdge = sel?.kind === "edge"
+    ? (graph?.edges ?? []).find((e) => e.src === sel.src && e.dst === sel.dst) ?? null : null;
+
   const neighbours = useMemo(() => {
-    if (!sel) return null;
-    const ids = new Set<string>([sel]);
+    if (!sel || sel.kind === "edge") return null;
+    const focus = sel.kind === "agent" ? sel.id : `group:${sel.name}`;
+    const ids = new Set<string>([focus]);
     for (const e of displayLinks) {
-      const src = typeof e.source === "object" ? (e.source as NetNode).id : e.source;
-      const dst = typeof e.target === "object" ? (e.target as NetNode).id : e.target;
-      if (src === sel) ids.add(dst);
-      if (dst === sel) ids.add(src);
+      const [s, t] = linkEnds(e);
+      if (s === focus) ids.add(t);
+      if (t === focus) ids.add(s);
     }
     return ids;
   }, [displayLinks, sel]);
+
+  const agentEdges = useMemo(
+    () => (sel?.kind === "agent"
+      ? (graph?.edges ?? []).filter((e) => e.src === sel.id || e.dst === sel.id)
+      : []),
+    [graph, sel]);
+
+  function fit() {
+    fgRef.current?.zoomToFit(400, 60);
+  }
+
+  function pick(id: string) {
+    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    setSel({ kind: "agent", id });
+    setPanel("detail");
+  }
 
   if (!graph) return <Spinner label="Building connections…" />;
   if (graph.nodes.length === 0) {
@@ -150,223 +249,560 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
   }
 
   const topFive = new Set([...nodes].sort((a, b) => b.degree - a.degree).slice(0, 5).map((n) => n.id));
-  const selectedAgent = selNode && !selNode.id.startsWith("group:") ? selNode : null;
-  const selectedGroup = selNode && selNode.id.startsWith("group:") ? selNode : null;
-  const selectedEdges = (graph.edges ?? []).filter((e) => e.src === sel || e.dst === sel);
-  const groupEdgeCount = (a: string, b: string) =>
-    (graph.edges ?? []).filter((e) => {
-      const ga = nodes.find((n) => n.id === e.src)?.group || "unassigned";
-      const gb = nodes.find((n) => n.id === e.dst)?.group || "unassigned";
-      return ga === a && gb === b;
-    }).length;
+  const pickedAgents = nodes.filter((n) => picked.includes(n.id));
 
   return (
-    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="flex flex-col gap-4">
+      {/* ---------------- toolbar ---------------- */}
       <div className="panel">
-        <div className="panel-head flex-wrap">
+        <div className="panel-head flex-wrap gap-2">
           <h2 className="t-h3">Connections</h2>
           <div className="flex flex-wrap items-center gap-2">
-            {roundFilter != null ? (
-              <span className="badge">ROUND {String(roundFilter).padStart(2, "0")}</span>
-            ) : <span className="badge">LATEST</span>}
+            {roundFilter != null
+              ? <span className="badge">ROUND {String(roundFilter).padStart(2, "0")}</span>
+              : <span className="badge">LATEST</span>}
             {roundFilter != null && onSelectRound && (
               <button className="btn btn-ghost btn-sm" onClick={() => onSelectRound(null)}>Latest</button>
             )}
             {graph.nodes.length > 25 && (
               <div className="seg" role="group" aria-label="Connection view">
-                <button className="seg-btn" aria-pressed={view === "groups"}
-                        onClick={() => { viewTouched.current = true; setView("groups"); }}>Groups</button>
-                <button className="seg-btn" aria-pressed={view === "agents"}
-                        onClick={() => { viewTouched.current = true; setView("agents"); }}>Agents</button>
-                <button className="seg-btn" aria-pressed={view === "matrix"}
-                        onClick={() => { viewTouched.current = true; setView("matrix"); }}>Matrix</button>
+                {(["groups", "agents", "matrix"] as const).map((v) => (
+                  <button key={v} className="seg-btn" aria-pressed={view === v}
+                          onClick={() => { viewTouched.current = true; setView(v); }}>
+                    {v[0].toUpperCase() + v.slice(1)}
+                  </button>
+                ))}
               </div>
             )}
-            <button className="btn btn-ghost btn-sm" onClick={() => fgRef.current?.zoomToFit(400, 60)}
-                    title="Fit the graph to the view">
-              <Maximize2 size={13} /> Reset view
+            <button className="btn btn-ghost btn-sm" onClick={fit} title="Fit the graph to the view">
+              <Maximize2 size={13} /> Fit
             </button>
+            {sel && (
+              <button className="btn btn-ghost btn-sm" onClick={() => { setSel(null); setPicked([]); }}>
+                <X size={13} /> Clear selection
+              </button>
+            )}
           </div>
         </div>
         <div className="panel-body">
-          <p className="t-meta mb-3">
-            Only relationships the engine recorded. Edge width is trust weight; agents are grouped
-            for large populations. Nothing is inferred from stance similarity.
-            {graph.nodes.length > 25 && " The group view is the default above 25 agents; the matrix is available above 100."}
-          </p>
-
-          {graph.edges.length === 0 ? (
-            <div className="empty" style={{ padding: "36px 20px" }}>
-              <p className="t-h3">No interactions recorded yet</p>
-              <p className="t-meta" style={{ maxWidth: 380 }}>
-                Connections appear once agents reply to or mention each other. The seed creates an
-                initial follow graph; if it is empty, the run has not started or has no agents.
-              </p>
-            </div>
-          ) : view === "matrix" ? (
-            <Matrix groups={groupStats} count={groupEdgeCount} />
-          ) : (
-            <>
-              <div ref={boxRef} className="mb-3"
-                   style={{ border: "1px solid var(--line-1)", borderRadius: "var(--r-2)",
-                            overflow: "hidden", background: "var(--bg-0)" }}>
-                <ForceGraph2D
-                  ref={fgRef}
-                  graphData={{ nodes: displayNodes as never, links: displayLinks as never }}
-                  nodeRelSize={4}
-                  nodeVal={((n: NetNode) => n.val) as never}
-                  nodeColor={((n: NetNode) => n.color) as never}
-                  nodeLabel={((n: NetNode) => n.id.startsWith("group:")
-                    ? `${n.name} — ${n.members?.length ?? 0} agents`
-                    : `${n.handle ?? n.id} — stance ${n.mean_stance.toFixed(2)}`) as never}
-                  nodeCanvasObjectMode={() => "replace" as never}
-                  nodeCanvasObject={((node: NetNode & { x?: number; y?: number },
-                                      ctx: CanvasRenderingContext2D, globalScale: number) => {
-                    const isGroup = node.id.startsWith("group:");
-                    const r = (isGroup ? 7 + Math.log2((node.members?.length ?? 1) + 1) * 3
-                      : Math.max(4.2, 3.4 + node.val * 1.2)) / globalScale;
-                    ctx.globalAlpha = neighbours && !neighbours.has(node.id) ? 0.16 : 1;
-                    ctx.beginPath();
-                    if (isGroup || node.mean_stance > 0.15) {
-                      ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI);
-                    } else if (node.mean_stance < -0.15) {
-                      ctx.moveTo(node.x ?? 0, (node.y ?? 0) - r);
-                      ctx.lineTo((node.x ?? 0) + r, node.y ?? 0);
-                      ctx.lineTo(node.x ?? 0, (node.y ?? 0) + r);
-                      ctx.lineTo((node.x ?? 0) - r, node.y ?? 0);
-                    } else {
-                      ctx.rect((node.x ?? 0) - r, (node.y ?? 0) - r, r * 2, r * 2);
-                    }
-                    ctx.fillStyle = node.color;
-                    ctx.fill();
-                    if (sel === node.id) {
-                      ctx.strokeStyle = "#6CA6FF";
-                      ctx.lineWidth = 2 / globalScale;
-                      ctx.stroke();
-                    }
-                    const showLabel = isGroup || graph.nodes.length <= 25 ||
-                      topFive.has(node.id) || globalScale > 1.5;
-                    if (showLabel) {
-                      ctx.font = `600 ${(isGroup ? 12 : 10) / globalScale}px "IBM Plex Sans", sans-serif`;
-                      ctx.fillStyle = NODE_TEXT;
-                      ctx.textAlign = "center";
-                      ctx.fillText(isGroup ? (node.name ?? "") : (node.handle ?? ""),
-                                   node.x ?? 0, (node.y ?? 0) + r + (isGroup ? 14 : 12) / globalScale);
-                    }
-                    ctx.globalAlpha = 1;
-                  }) as never}
-                  onNodeClick={((n: NetNode) => {
-                    setSel((cur) => (cur === n.id ? null : n.id));
-                  }) as never}
-                  linkWidth={((l: NetLink) => 0.6 + Math.max(0, l.weight) * 2.4) as never}
-                  linkColor={((l: NetLink) => {
-                    if (!neighbours) return LINK_COLOR;
-                    const src = typeof l.source === "object" ? (l.source as NetNode).id : l.source;
-                    const dst = typeof l.target === "object" ? (l.target as NetNode).id : l.target;
-                    return src === sel || dst === sel ? LINK_COLOR : "rgba(141,153,170,0.10)";
-                  }) as never}
-                  linkDirectionalParticles={displayLinks.length > 300 ? 0 : 2}
-                  linkDirectionalParticleWidth={1.2}
-                  width={canvasW}
-                  height={canvasW < 520 ? 360 : 480}
-                  backgroundColor="rgba(0,0,0,0)"
-                  onEngineStop={() => fgRef.current?.zoomToFit(400, 60)}
-                  cooldownTicks={200}
-                />
-              </div>
-              <div className="t-meta flex flex-wrap items-center gap-3">
-                <span className="flex items-center gap-1.5"><span className="dot" style={{ background: "#2EBBA8" }} /> supports (circle)</span>
-                <span className="flex items-center gap-1.5"><span className="dot" style={{ background: "#8D99AA" }} /> undecided (square)</span>
-                <span className="flex items-center gap-1.5"><span className="dot" style={{ background: "#F0883A" }} /> opposes (diamond)</span>
-                <span className="flex items-center gap-1.5">
-                  <svg width={26} height={8} aria-hidden><line x1="0" y1="4" x2="26" y2="4" stroke={LINK_COLOR} strokeWidth="1.5" /></svg>
-                  recorded relationship (width = trust)
-                </span>
-                <span className="ml-auto">{view === "groups" ? `${groupStats.length} groups` : `${nodes.length} agents`}</span>
-              </div>
-              <div className="mt-3">
-                <input type="range" min={1} max={Math.max(1, ticks)} step={1}
-                       value={roundFilter ?? Math.max(1, ticks)}
-                       onChange={(e) => onSelectRound?.(Number(e.target.value))}
-                       className="w-full" aria-label="Connections round" />
-                <div className="mono flex justify-between" style={{ fontSize: 10, color: "var(--fg-4)" }}>
-                  <span>round 01</span>
-                  <span>{roundFilter == null ? "latest recorded state" : `state at round ${roundFilter}`}</span>
-                  <span>round {String(ticks).padStart(2, "0")}</span>
-                </div>
-              </div>
-            </>
-          )}
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="field" style={{ minWidth: 200, flex: "1 1 200px" }}>
+              <span className="label">Search agents or groups</span>
+              <span className="flex items-center gap-2">
+                <Search size={14} style={{ color: "var(--fg-3)" }} />
+                <input className="input" value={query} placeholder="name, handle or group…"
+                       onChange={(e) => setQuery(e.target.value)} />
+              </span>
+            </label>
+            <label className="field">
+              <span className="label">Stance</span>
+              <select className="input" value={stanceFilter}
+                      onChange={(e) => setStanceFilter(e.target.value as typeof stanceFilter)}>
+                <option value="all">All</option>
+                <option value="pro">Support</option>
+                <option value="neu">Undecided</option>
+                <option value="con">Oppose</option>
+              </select>
+            </label>
+            <label className="field">
+              <span className="label">Relationship</span>
+              <select className="input" value={linkFilter}
+                      onChange={(e) => setLinkFilter(e.target.value as typeof linkFilter)}>
+                <option value="all">All</option>
+                <option value="strong">Strong (≥ 0.5)</option>
+                <option value="weak">Weak (&lt; 0.5)</option>
+              </select>
+            </label>
+            <label className="field">
+              <span className="label">Group scope</span>
+              <select className="input" value={scope}
+                      onChange={(e) => setScope(e.target.value as typeof scope)}>
+                <option value="all">All</option>
+                <option value="same">Same group</option>
+                <option value="cross">Cross group</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 
-      <div className="panel">
-        <div className="panel-head">
-          <h2 className="t-h3">{selectedGroup ? "Selected group" : selectedAgent ? "Selected agent" : "Selection"}</h2>
-          {selNode && <button className="btn btn-ghost btn-sm" onClick={() => setSel(null)}>Clear</button>}
+      {/* ---------------- graph + panel ---------------- */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {/* On small screens the list and detail panel come first: the canvas is a
+            large, imprecise target and should not push the accessible controls
+            below the fold. */}
+        <div className="order-2 panel lg:order-1">
+          <div className="panel-head flex-wrap">
+            <h3 className="t-h4">
+              {view === "groups" ? "Stakeholder group network" : "Agent network"}
+            </h3>
+            <div className="flex items-center gap-1">
+              <button className="btn btn-ghost btn-icon btn-sm" aria-label="Zoom in"
+                      onClick={() => fgRef.current?.zoom((fgRef.current?.zoom?.() ?? 1) * 1.3, 300)}>
+                <Plus size={13} />
+              </button>
+              <button className="btn btn-ghost btn-icon btn-sm" aria-label="Zoom out"
+                      onClick={() => fgRef.current?.zoom((fgRef.current?.zoom?.() ?? 1) / 1.3, 300)}>
+                <Minus size={13} />
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={fit} aria-label="Fit graph">Fit</button>
+            </div>
+          </div>
+          <div className="panel-body">
+            {view === "matrix" ? (
+              <Matrix groups={groupStats} edges={graph.edges ?? []} groupOf={groupOf} />
+            ) : graph.edges.length === 0 ? (
+              <div className="empty" style={{ padding: "36px 20px" }}>
+                <p className="t-h3">No interactions recorded yet</p>
+                <p className="t-meta" style={{ maxWidth: 380 }}>
+                  Connections appear once agents reply to or mention each other. The seed creates an
+                  initial follow graph; if it is empty, the run has not started or has no agents.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div ref={boxRef}
+                     style={{ border: "1px solid var(--line-1)", borderRadius: "var(--r-2)",
+                              overflow: "hidden", background: "var(--bg-0)" }}>
+                  <ForceGraph2D
+                    ref={fgRef}
+                    graphData={{ nodes: displayNodes as never, links: displayLinks as never }}
+                    nodeRelSize={4}
+                    nodeVal={((n: NetNode) => n.val) as never}
+                    nodeColor={((n: NetNode) => n.color) as never}
+                    nodeLabel={((n: NetNode) => n.id.startsWith("group:")
+                      ? `${n.name} — ${n.members?.length ?? 0} agents · stance ${n.mean_stance.toFixed(2)}`
+                      : `${n.handle ?? n.id} — ${n.group} · stance ${n.mean_stance.toFixed(2)}`) as never}
+                    nodeCanvasObjectMode={() => "replace" as never}
+                    nodeCanvasObject={((node: NetNode & { x?: number; y?: number },
+                                        ctx: CanvasRenderingContext2D, globalScale: number) => {
+                      const isGroup = node.id.startsWith("group:");
+                      const r = (isGroup ? 7 + Math.log2((node.members?.length ?? 1) + 1) * 3
+                        : Math.max(4.2, 3.4 + node.val * 1.2)) / globalScale;
+                      const dimmed = (neighbours && !neighbours.has(node.id))
+                        || (query.trim() && !isGroup && !matchIds.has(node.id));
+                      ctx.globalAlpha = dimmed ? 0.14 : 1;
+                      ctx.beginPath();
+                      if (isGroup || node.mean_stance > 0.15) {
+                        ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI);
+                      } else if (node.mean_stance < -0.15) {
+                        ctx.moveTo(node.x ?? 0, (node.y ?? 0) - r);
+                        ctx.lineTo((node.x ?? 0) + r, node.y ?? 0);
+                        ctx.lineTo(node.x ?? 0, (node.y ?? 0) + r);
+                        ctx.lineTo((node.x ?? 0) - r, node.y ?? 0);
+                      } else {
+                        ctx.rect((node.x ?? 0) - r, (node.y ?? 0) - r, r * 2, r * 2);
+                      }
+                      ctx.fillStyle = node.color;
+                      ctx.fill();
+                      const isSel = (sel?.kind === "agent" && sel.id === node.id)
+                        || (sel?.kind === "group" && sel.name === node.group && isGroup);
+                      if (isSel || picked.includes(node.id)) {
+                        ctx.strokeStyle = "#6CA6FF";
+                        ctx.lineWidth = 2.5 / globalScale;
+                        ctx.stroke();
+                      }
+                      const showLabel = isGroup || graph.nodes.length <= 25 ||
+                        topFive.has(node.id) || globalScale > 1.5 || picked.includes(node.id);
+                      if (showLabel) {
+                        ctx.font = `600 ${(isGroup ? 12 : 10) / globalScale}px "IBM Plex Sans", sans-serif`;
+                        ctx.fillStyle = NODE_TEXT;
+                        ctx.textAlign = "center";
+                        ctx.fillText(isGroup ? (node.name ?? "") : (node.handle ?? ""),
+                                     node.x ?? 0, (node.y ?? 0) + r + (isGroup ? 14 : 12) / globalScale);
+                      }
+                      ctx.globalAlpha = 1;
+                    }) as never}
+                    onNodeClick={((n: NetNode) => {
+                      if (n.id.startsWith("group:")) {
+                        setSel({ kind: "group", name: n.name ?? "" });
+                        setPanel("detail");
+                      } else {
+                        setSel({ kind: "agent", id: n.id });
+                        setPanel("detail");
+                      }
+                    }) as never}
+                    onLinkClick={((l: NetLink) => {
+                      const [s, t] = linkEnds(l);
+                      setSel({ kind: "edge", src: s, dst: t });
+                      setPanel("detail");
+                    }) as never}
+                    onBackgroundClick={() => { setSel(null); }}
+                    linkWidth={((l: NetLink) => {
+                      const [s, t] = linkEnds(l);
+                      const active = sel?.kind === "agent" && (s === sel.id || t === sel.id);
+                      return (active ? 2.2 : 0.6) + Math.max(0, l.weight) * 2.4;
+                    }) as never}
+                    linkColor={((l: NetLink) => {
+                      const [s, t] = linkEnds(l);
+                      if (sel?.kind === "edge") {
+                        return (sel.src === s && sel.dst === t) ? "#6CA6FF" : "rgba(141,153,170,0.12)";
+                      }
+                      if (!neighbours) return LINK_COLOR;
+                      return neighbours.has(s) && neighbours.has(t) ? LINK_COLOR : "rgba(141,153,170,0.10)";
+                    }) as never}
+                    linkDirectionalParticles={displayLinks.length > 300 ? 0 : 2}
+                    linkDirectionalParticleWidth={1.2}
+                    width={canvasW}
+                    height={canvasW < 520 ? 380 : 520}
+                    backgroundColor="rgba(0,0,0,0)"
+                    onEngineStop={() => {
+                      // Re-fit once the layout settles so nodes use the canvas
+                      // instead of clustering in a corner.
+                      if (!fitted.current) { fitted.current = true; fit(); }
+                    }}
+                    cooldownTicks={200}
+                  />
+                </div>
+                <div className="t-meta mt-2 flex flex-wrap items-center gap-3">
+                  <span className="flex items-center gap-1.5"><span className="dot" style={{ background: "#2EBBA8" }} /> supports (circle)</span>
+                  <span className="flex items-center gap-1.5"><span className="dot" style={{ background: "#8D99AA" }} /> undecided (square)</span>
+                  <span className="flex items-center gap-1.5"><span className="dot" style={{ background: "#F0883A" }} /> opposes (diamond)</span>
+                  <span className="ml-auto">
+                    {view === "groups" ? `${groupStats.length} groups` : `${nodes.length} agents`}
+                    {" · "}{links.length} relationship{links.length === 1 ? "" : "s"} shown
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <input type="range" min={1} max={Math.max(1, ticks)} step={1}
+                         value={roundFilter ?? Math.max(1, ticks)}
+                         onChange={(e) => onSelectRound?.(Number(e.target.value))}
+                         className="w-full" aria-label="Connections round" />
+                  <div className="mono flex justify-between" style={{ fontSize: 10, color: "var(--fg-4)" }}>
+                    <span>round 01</span>
+                    <span>{roundFilter == null ? "latest recorded state" : `state at round ${roundFilter}`}</span>
+                    <span>round {String(ticks).padStart(2, "0")}</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-        <div className="panel-body">
-          {!selNode ? (
-            <p className="t-meta">
-              Click a node to inspect the connections recorded at {roundFilter == null ? "the latest state" : `round ${roundFilter}`}.
-              Node shape and colour encode stance; edge width is the recorded trust weight.
-            </p>
-          ) : selectedGroup ? (
-            <div>
-              <p style={{ fontWeight: 600 }}>{selectedGroup.name}</p>
-              <p className="t-meta">{selectedGroup.members?.length ?? 0} agents · mean stance {selectedGroup.mean_stance.toFixed(2)}</p>
-              <div className="divider my-3" />
-              <p className="eyebrow mb-1.5">Members</p>
-              <ul className="m-0 flex max-h-[44vh] list-none flex-col gap-1 overflow-y-auto p-0 text-xs">
-                {(selectedGroup.members ?? []).map((id) => {
-                  const n = nodes.find((x) => x.id === id);
-                  return (
-                    <li key={id} className="panel-2 flex items-center gap-2 p-2">
-                      <span className="mono min-w-0 truncate">@{n?.handle ?? id}</span>
-                      <span className="ml-auto mono" style={{ color: "var(--fg-3)" }}>{n?.mean_stance.toFixed(2)}</span>
-                    </li>
-                  );
-                })}
-              </ul>
+
+        {/* ---------------- side panel ---------------- */}
+        <div className="order-1 panel lg:order-2">
+          <div className="panel-head flex-wrap">
+            <div className="seg" role="group" aria-label="Panel">
+              <button className="seg-btn" aria-pressed={panel === "list"} onClick={() => setPanel("list")}>
+                List
+              </button>
+              <button className="seg-btn" aria-pressed={panel === "detail"} onClick={() => setPanel("detail")}>
+                Detail
+              </button>
             </div>
-          ) : (
-            <div>
-              <p style={{ fontWeight: 600 }}>{selectedAgent?.name}</p>
-              <p className="t-meta mono">@{selectedAgent?.handle} · stance {selectedAgent?.mean_stance.toFixed(2)}</p>
-              <p className="t-meta">{selectedAgent?.group ?? "unassigned"} · {selectedAgent?.degree ?? 0} recorded relationships</p>
-              <div className="divider my-3" />
-              <p className="eyebrow mb-1.5">Connections at {roundFilter == null ? "latest" : `round ${roundFilter}`} — {selectedEdges.length}</p>
-              {selectedEdges.length === 0 ? (
-                <p className="t-meta">No recorded connections for this agent yet.</p>
-              ) : (
-                <ul className="m-0 flex max-h-[46vh] list-none flex-col gap-1 overflow-y-auto p-0 text-xs">
-                  {selectedEdges.map((e, i) => (
-                    <li key={i} className="panel-2 flex min-w-0 items-center gap-2 p-2">
-                      <span className="mono flex-none" style={{ color: "var(--fg-3)" }}>
-                        {e.src === sel ? "→ follows" : "← followed by"}
-                      </span>
-                      <span className="mono min-w-0 truncate">
-                        {graph.nodes.find((n) => n.id === (e.src === sel ? e.dst : e.src))?.handle ?? "?"}
-                      </span>
-                      <span className="num flex-none" style={{ color: "var(--fg-4)" }}>
-                        w {e.weight.toFixed(2)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+            {sel && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setSel(null)} aria-label="Clear selection">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          <div className="panel-body">
+            {panel === "list" ? (
+              <EntityList
+                agents={visibleAgents}
+                groups={groupStats}
+                picked={picked}
+                selected={sel}
+                onPick={pick}
+                onGroup={(name) => { setSel({ kind: "group", name }); setPanel("detail"); }}
+              />
+            ) : (
+              <DetailPanel
+                sel={sel} agent={selAgent} group={selGroup} edge={selEdge}
+                nodes={nodes} edges={agentEdges}
+                pickedAgents={pickedAgents}
+                roundFilter={roundFilter}
+                onSelectAgent={(id) => { setSel({ kind: "agent", id }); }}
+                onSelectEdge={(src, dst) => setSel({ kind: "edge", src, dst })}
+                onPick={pick}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function Matrix({ groups, count }: {
+function EntityList({ agents, groups, picked, selected, onPick, onGroup }: {
+  agents: NetNode[];
   groups: { name: string; members: string[] }[];
-  count: (a: string, b: string) => number;
+  picked: string[];
+  selected: Selection;
+  onPick: (id: string) => void;
+  onGroup: (name: string) => void;
 }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <div className="eyebrow mb-2">Stakeholder groups ({groups.length})</div>
+        <div className="flex flex-col gap-1">
+          {groups.map((g) => {
+            const active = selected?.kind === "group" && selected.name === g.name;
+            return (
+              <button key={g.name} className="list-row" onClick={() => onGroup(g.name)}
+                      aria-pressed={active} style={{ padding: "7px 9px", fontWeight: active ? 600 : 400 }}>
+                <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                <span className="t-meta">{g.members.length}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <div className="eyebrow mb-2">Agents ({agents.length})</div>
+        <div className="flex max-h-[42vh] flex-col gap-1 overflow-y-auto">
+          {agents.length === 0 && <p className="t-meta">No agent matches the search.</p>}
+          {agents.map((a) => {
+            const active = selected?.kind === "agent" && selected.id === a.id;
+            return (
+              <label key={a.id} className="list-row"
+                     style={{ padding: "6px 8px", cursor: "pointer",
+                              background: active ? "var(--bg-2)" : undefined }}>
+                <input type="checkbox" checked={picked.includes(a.id)}
+                       onChange={() => onPick(a.id)}
+                       aria-label={`Select ${a.handle ?? a.id}`} />
+                <span className="min-w-0 flex-1 truncate">@{a.handle ?? a.id}</span>
+                <span className="t-meta truncate" style={{ maxWidth: 90 }}>{a.group}</span>
+                <span className="mono flex-none" style={{ fontSize: 11, color: stanceColor(a.mean_stance) }}>
+                  {a.mean_stance.toFixed(2)}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailPanel({ sel, agent, group, edge, nodes, edges, pickedAgents, roundFilter,
+  onSelectAgent, onSelectEdge, onPick }: {
+  sel: Selection;
+  agent: NetNode | null;
+  group: { name: string; members: string[]; n: number; sum: number } | null;
+  edge: { src: string; dst: string; follows: boolean; weight: number; interactions?: number } | null;
+  nodes: NetNode[];
+  edges: { src: string; dst: string; follows: boolean; weight: number; interactions?: number }[];
+  pickedAgents: NetNode[];
+  roundFilter?: number | null;
+  onSelectAgent: (id: string) => void;
+  onSelectEdge: (src: string, dst: string) => void;
+  onPick: (id: string) => void;
+}) {
+  if (pickedAgents.length > 1) {
+    const meanStance = pickedAgents.reduce((s, a) => s + a.mean_stance, 0) / pickedAgents.length;
+    const groups = [...new Set(pickedAgents.map((a) => a.group))];
+    return (
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="eyebrow">Comparison</div>
+          <p className="t-h3 mt-1">{pickedAgents.length} agents selected</p>
+          <p className="t-meta">Mean stance {meanStance.toFixed(2)} · {groups.length} group(s)</p>
+        </div>
+        <table className="tbl">
+          <thead>
+            <tr><th>Agent</th><th>Group</th><th className="r">Stance</th><th className="r">Links</th></tr>
+          </thead>
+          <tbody>
+            {pickedAgents.map((a) => (
+              <tr key={a.id}>
+                <td className="truncate">@{a.handle ?? a.id}</td>
+                <td className="truncate">{a.group}</td>
+                <td className="r mono" style={{ color: stanceColor(a.mean_stance) }}>{a.mean_stance.toFixed(2)}</td>
+                <td className="r mono">{a.degree}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="t-meta">Select a single agent to see its connections, or untick to narrow the comparison.</p>
+      </div>
+    );
+  }
+
+  if (!sel) {
+    return (
+      <p className="t-meta">
+        Pick an agent, a stakeholder group, or a connection. Every entity is reachable from the
+        list as well as the graph, so nothing depends on clicking a small node.
+      </p>
+    );
+  }
+
+  if (sel.kind === "agent" && agent) {
+    const outgoing = edges.filter((e) => e.src === agent.id);
+    const incoming = edges.filter((e) => e.dst === agent.id);
+    const strong = [...edges].sort((a, b) => b.weight - a.weight).slice(0, 5);
+    const handleOf = (id: string) => nodes.find((n) => n.id === id)?.handle ?? id;
+    return (
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="eyebrow">Agent</div>
+          <p className="t-h3 mt-1">{agent.name ?? agent.id}</p>
+          <p className="t-meta mono">@{agent.handle ?? agent.id}</p>
+          <dl className="kv mt-2" style={{ gridTemplateColumns: "96px minmax(0,1fr)", fontSize: 12.5 }}>
+            <dt>Group</dt><dd>{agent.group}</dd>
+            <dt>Stance</dt><dd className="mono" style={{ color: stanceColor(agent.mean_stance) }}>
+              {agent.mean_stance.toFixed(2)}</dd>
+            <dt>Connections</dt><dd className="mono">{edges.length}</dd>
+            <dt>Archetype</dt><dd>{agent.archetype ?? "—"}</dd>
+          </dl>
+        </div>
+
+        <div>
+          <div className="eyebrow mb-1">
+            Connections at {roundFilter == null ? "latest" : `round ${roundFilter}`}
+          </div>
+          {edges.length === 0 ? (
+            <p className="t-meta">No recorded connections for this agent yet.</p>
+          ) : (
+            <div className="flex max-h-[36vh] flex-col gap-1 overflow-y-auto">
+              {edges.slice(0, 40).map((e) => {
+                const outgoingEdge = e.src === agent.id;
+                const other = outgoingEdge ? e.dst : e.src;
+                return (
+                  <button key={`${e.src}-${e.dst}`} className="list-row"
+                          onClick={() => onSelectEdge(e.src, e.dst)}
+                          style={{ padding: "6px 8px" }}>
+                    <span className="mono flex-none" style={{ fontSize: 10, color: "var(--fg-3)" }}>
+                      {outgoingEdge ? "→" : "←"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{handleOf(other)}</span>
+                    <span className="mono flex-none" style={{ fontSize: 11, color: "var(--fg-4)" }}>
+                      {e.weight.toFixed(2)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {strong.length > 0 && (
+          <div>
+            <div className="eyebrow mb-1">Strongest relationships</div>
+            <ul className="m-0 flex list-none flex-col gap-1 p-0">
+              {strong.map((e) => (
+                <li key={`s-${e.src}-${e.dst}`} className="t-meta">
+                  {handleOf(e.src)} → {handleOf(e.dst)} · trust {e.weight.toFixed(2)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <button className="btn btn-ghost btn-sm" onClick={() => onPick(agent.id)}>
+            Add to comparison
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => onSelectAgent(agent.id)}>
+            Stay on agent
+          </button>
+        </div>
+        <p className="t-meta">
+          Direction is who follows whom as recorded by the engine. Interaction counts are stored per
+          edge; issue-by-issue attribution of an edge is not recorded, so it is not shown.
+        </p>
+      </div>
+    );
+  }
+
+  if (sel.kind === "group" && group) {
+    const members = nodes.filter((n) => group.members.includes(n.id));
+    const mean = members.length ? members.reduce((s, a) => s + a.mean_stance, 0) / members.length : 0;
+    const pro = members.filter((m) => m.mean_stance > 0.15).length;
+    const con = members.filter((m) => m.mean_stance < -0.15).length;
+    const mostConnected = [...members].sort((a, b) => b.degree - a.degree).slice(0, 5);
+    return (
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="eyebrow">Stakeholder group</div>
+          <p className="t-h3 mt-1">{group.name}</p>
+          <p className="t-meta">Mean stance {mean.toFixed(2)} · {members.length} agents</p>
+        </div>
+        <div>
+          <div className="eyebrow mb-1">Stance distribution</div>
+          <div className="flex h-2 w-full overflow-hidden" style={{ borderRadius: 99, background: "var(--bg-0)" }}>
+            <span style={{ width: `${(pro / Math.max(1, members.length)) * 100}%`, background: "var(--pro)" }} />
+            <span style={{ width: `${((members.length - pro - con) / Math.max(1, members.length)) * 100}%`, background: "var(--neu)" }} />
+            <span style={{ width: `${(con / Math.max(1, members.length)) * 100}%`, background: "var(--con)" }} />
+          </div>
+          <p className="t-meta mt-1">{pro} support · {members.length - pro - con} undecided · {con} oppose</p>
+        </div>
+        <div>
+          <div className="eyebrow mb-1">Most connected agents</div>
+          <div className="flex flex-col gap-1">
+            {mostConnected.map((m) => (
+              <button key={m.id} className="list-row" style={{ padding: "5px 8px" }}
+                      onClick={() => onSelectAgent(m.id)}>
+                <span className="min-w-0 flex-1 truncate">@{m.handle ?? m.id}</span>
+                <span className="mono t-meta">{m.degree}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="eyebrow mb-1">Members</div>
+          <div className="flex max-h-[28vh] flex-col gap-1 overflow-y-auto">
+            {members.map((m) => (
+              <button key={m.id} className="list-row" style={{ padding: "5px 8px" }}
+                      onClick={() => onSelectAgent(m.id)}>
+                <span className="min-w-0 flex-1 truncate">@{m.handle ?? m.id}</span>
+                <span className="mono" style={{ fontSize: 11, color: stanceColor(m.mean_stance) }}>
+                  {m.mean_stance.toFixed(2)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (sel.kind === "edge" && edge) {
+    const handleOf = (id: string) => nodes.find((n) => n.id === id)?.handle ?? id;
+    const srcNode = nodes.find((n) => n.id === edge.src);
+    const dstNode = nodes.find((n) => n.id === edge.dst);
+    return (
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="eyebrow">Connection</div>
+          <p className="t-h3 mt-1">{handleOf(edge.src)} → {handleOf(edge.dst)}</p>
+        </div>
+        <dl className="kv" style={{ gridTemplateColumns: "130px minmax(0,1fr)", fontSize: 12.5 }}>
+          <dt>Source</dt><dd>@{handleOf(edge.src)} ({srcNode?.group ?? "—"})</dd>
+          <dt>Target</dt><dd>@{handleOf(edge.dst)} ({dstNode?.group ?? "—"})</dd>
+          <dt>Relationship</dt><dd>{edge.follows ? "follow" : "interaction only"}</dd>
+          <dt>Trust weight</dt><dd className="mono">{edge.weight.toFixed(2)}</dd>
+          <dt>Interactions</dt><dd className="mono">{edge.interactions ?? 0}</dd>
+          <dt>Direction</dt><dd>source → target (recorded)</dd>
+          <dt>Issue context</dt><dd className="fg-3">not recorded per edge</dd>
+        </dl>
+        <div className="flex gap-2">
+          <button className="btn btn-ghost btn-sm" onClick={() => onSelectAgent(edge.src)}>
+            Inspect source
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => onSelectAgent(edge.dst)}>
+            Inspect target
+          </button>
+        </div>
+        <p className="t-meta">
+          The engine records the direction and strength of a relationship but not which issue each
+          interaction concerned, so no issue attribution is shown rather than a guessed one.
+        </p>
+      </div>
+    );
+  }
+
+  return <p className="t-meta">That selection is no longer present at this round.</p>;
+}
+
+function Matrix({ groups, edges, groupOf }: {
+  groups: { name: string; members: string[] }[];
+  edges: { src: string; dst: string; weight: number }[];
+  groupOf: Map<string, string>;
+}) {
+  const count = (a: string, b: string) =>
+    edges.filter((e) => groupOf.get(e.src) === a && groupOf.get(e.dst) === b).length;
   return (
     <div className="overflow-x-auto">
       <table className="tbl" style={{ minWidth: Math.max(420, groups.length * 78 + 160) }}>
@@ -381,7 +817,8 @@ function Matrix({ groups, count }: {
             <tr key={g.name}>
               <td style={{ fontWeight: 500 }}>{g.name}</td>
               {groups.map((h) => (
-                <td key={h.name} className="r mono" style={{ color: g.name === h.name ? "var(--fg-4)" : "var(--fg-1)" }}>
+                <td key={h.name} className="r mono"
+                    style={{ color: g.name === h.name ? "var(--fg-4)" : "var(--fg-1)" }}>
                   {g.name === h.name ? "—" : count(g.name, h.name)}
                 </td>
               ))}
@@ -391,7 +828,6 @@ function Matrix({ groups, count }: {
       </table>
       <p className="t-meta px-4 py-3">
         Cell values are recorded directed relationships from the row group to the column group.
-        The matrix is the readable default for 100+ agents; the group graph remains available.
       </p>
     </div>
   );

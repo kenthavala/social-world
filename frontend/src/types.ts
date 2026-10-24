@@ -184,6 +184,11 @@ export interface Agent {
   state: Record<string, number>;
   belief_summary: string;
   knowledge: unknown[];
+  influence?: number | null;
+  institutional_power?: number | null;
+  trust_level?: number | null;
+  group_description?: string;
+  concerns?: string[];
 }
 
 export interface GraphNode {
@@ -276,6 +281,109 @@ export interface FindingsResponse {
   agents_total: number;
   calls_total: number;
   findings: Finding[];
+}
+
+// ---- computed narrative (no model call) -----------------------------------
+export interface NarrativeEvidence {
+  chunk_id: string;
+  citations: number;
+  page_start: number | null;
+  page_end: number | null;
+  heading: string | null;
+  excerpt: string;
+}
+
+export interface NarrativeFinding {
+  id: string;
+  headline: string;
+  explanation: string;
+  why_it_matters: string;
+  strength: "strong" | "moderate" | "indicative";
+  strength_reason: string;
+  issue_ids: string[];
+  groups: string[];
+  agents: string[];
+  data: { label: string; value: string }[];
+  evidence: NarrativeEvidence[];
+  post_ids: string[];
+}
+
+export interface NarrativeIssue {
+  issue_id: string;
+  name: string;
+  question: string;
+  category?: string | null;
+  initial_mean: number | null;
+  final_mean: number | null;
+  delta: number | null;
+  spread: number | null;
+  pro_agents: number;
+  neutral_agents: number;
+  con_agents: number;
+  observed_agents: number;
+  supporters: string[];
+  opponents: string[];
+  undecided: string[];
+  groups: {
+    name: string; agents: number; final_mean: number | null;
+    delta: number | null; position: string; influence?: number | null;
+  }[];
+  movement: { group: string; delta: number; direction: string }[];
+  triggers: Record<string, number>;
+  evidence: NarrativeEvidence[];
+  top_agents: {
+    agent_id: string; handle: string | null; name: string | null;
+    group: string; posts: number; mean_stance: number;
+  }[];
+  strength: string;
+  strength_reason: string;
+}
+
+export interface NarrativeStakeholder {
+  name: string;
+  description: string;
+  agents: number;
+  influence?: number | null;
+  institutional_power?: number | null;
+  trust_level?: number | null;
+  initial_mean: number | null;
+  final_mean: number | null;
+  delta: number | null;
+  per_issue: {
+    issue_id: string; initial: number | null; final: number | null;
+    delta: number | null; agents: number;
+  }[];
+  priority_issues: string[];
+  concerns: string[];
+  interests: string[];
+  representatives: {
+    agent_id: string; handle: string | null; name: string | null; posts: number;
+  }[];
+  network_role: string;
+  strength: string;
+  strength_reason: string;
+}
+
+export interface NarrativeResponse {
+  run_id: string;
+  generated_at: string;
+  provenance: { kind: string; method: string; predictive_accuracy: string };
+  scale: {
+    agents: number; posts: number; rounds_completed: number;
+    rounds_configured: number | null; issues: number; groups: number;
+    stance_observations: number; overall_initial: number | null;
+    overall_final: number | null; overall_delta: number | null;
+    posts_with_source: number; distinct_chunks_cited: number;
+  };
+  answers: {
+    what_happened: string; why: string; who_drove_it: string; what_evidence: string;
+    agreement: string; disagreement: string; what_changed: string; watch: string;
+  };
+  key_findings: NarrativeFinding[];
+  issues: NarrativeIssue[];
+  stakeholders: NarrativeStakeholder[];
+  timeline: { tick: number; kind: string; label: string; detail: string }[];
+  uncertainty: string[];
 }
 
 export interface CompareSide {
