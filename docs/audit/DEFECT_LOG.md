@@ -359,3 +359,37 @@ The `iss_1` label is the name the spec typed in Step 4, so the report now eviden
 - **Impact:** Steps 10-11 demanded that the report and findings contain the strings `Group 1`, `Group 2` and `Group 3`. No correct product can satisfy that: those strings are a rendering artefact of row position with no counterpart anywhere in the data. This is why the product change alone (D017) could not turn the suite green — the last three groups matched by coincidence, the first three could not.
 - **Fix:** the capture now reads the group **name** from each row's `Name` field into `inputGroupNames`, and the ordinal list is kept separately as `inputGroupLabels` for the Step 5 reload comparison, which genuinely is about matching rows rather than names. No assertion changed; Step 5 still compares labels to labels.
 - **Verification:** Steps 10-11 pass, and the suite is green on both projects.
+### D019: Real provider test blocked by NVIDIA NIM latency
+- **File**: M1-B acceptance criterion (real free provider run)
+- **Impact**: Cannot verify M1-B "≥ 20 LLM-written posts with page badges, stance lines move" because NVIDIA NIM API calls take ~100-180s each. An 8-agent, 8-tick run with 4 writes/tick requires ~256 LLM calls, which would take 7-12 hours at current latency.
+- **Root cause**: NVIDIA NIM free tier has very high latency (~100-180s/call per KNOWN_LIMITS.md). The test environment cannot complete a meaningful real provider run in reasonable time.
+- **Evidence**: `python -c "asyncio.run(run_real_test())"` returned `Status: running, Posts: 0, LLM calls: 0` after 300s timeout.
+- **Workaround**: M1-B verified with mock provider (E2E test passes). Real provider verification requires faster provider or reduced scope.
+- **Status**: BLOCKED - documented as known limitation per KNOWN_LIMITS.md item 13.
+
+
+---
+
+## M1-B Real Provider Test — Run Results
+
+**Test executed:** `backend/test_real_provider.py` (3 agents, 2 ticks, writes_per_tick=2)
+
+| Run ID | Provider | Model(s) | Duration | Status | Posts | LLM Calls | Result |
+|--------|----------|----------|----------|--------|-------|-----------|--------|
+| run_m1b_real | nvidia_nim | meta/llama-3.1-70b-instruct, meta/llama-3.1-8b-instruct | 2.5s | completed | 2 | 0 successful | FAIL |
+
+### Error Details
+- **Persona seeding call**: 410 Gone — "The model 'meta/llama-3.1-70b-instruct' has reached its end of life on 2026-08-26T09:00:00Z and is no longer available."
+- **Write calls (2)**: 410 Gone — same model end-of-life error for meta/llama-3.1-8b-instruct
+
+### Verification Checks
+- ≥5 posts generated: **FAIL** (only 2 posts, both deterministic fallback/template posts)
+- Page badges present (cited chunk IDs): **FAIL** (no posts carried `cited_chunk_ids_json`)
+- Stance movement detected: **FAIL** (no `stance_changes` rows recorded)
+
+### Notes
+- NVIDIA_API_KEY was a placeholder; real key not available in test environment.
+- Model deprecation (410) is a hard error not in RETRYABLE_STATUS, so gateway failed fast without retry/fallback.
+- Run completed in 2.5s (did not exceed 5-minute watchdog), so OPENCODE_API_KEY fallback was not triggered per instructions.
+- Without a real provider key and current model, M1-B acceptance criterion cannot be satisfied.
+

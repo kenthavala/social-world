@@ -132,3 +132,42 @@ async def test_pause_then_resume_completes(brief_run, monkeypatch):
     assert len(rows) == len({r["id"] for r in rows})  # no duplicate posts
     assert len(rows) == len({(r["tick"], r["agent_id"]) for r in rows})  # no re-committed groups
     assert dbm.scalar("SELECT COUNT(*) FROM posts WHERE run_id=?", (run_id,)) >= posts_at_pause
+
+
+@pytest.mark.asyncio
+async def test_kill_resume_no_duplicate_posts(brief_run):
+    """Kill server mid-run (status='running'), recover_on_startup, resume, zero duplicate posts/seq."""
+    run_id, _ = brief_run
+    cfg = db.uj(db.scalar("SELECT config_json FROM runs WHERE id=?", (run_id,)), {})
+    cfg["writes_per_tick"] = 2
+    cfg["ticks"] = 3
+    db.execute("UPDATE runs SET config_json=? WHERE id=?", (db.j(cfg), run_id))
+    from app.llm.gateway import gateway
+    await engine.seed_run(run_id, gateway)
+    ctx = await engine.load_context(run_id)
+
+    # Simulate crash mid-run: tick 1 committed, server still marked 'running'
+    await engine.do_tick(ctx, 1)
+    ctx.last_completed = 1
+    db.execute("UPDATE runs SET status='running' WHERE id=?", (run_id,))
+
+    # Recover on startup marks interrupted
+    engine.recover_on_startup()
+    assert db.scalar("SELECT status FROM runs WHERE id=?", (run_id,)) == "interrupted"
+
+    # Resume completes remaining ticks
+    await engine.request_resume(run_id)
+    task = engine._tasks.get(run_id)
+    assert task is not None
+    deadline = asyncio.get_event_loop().time() + 30
+    while not task.done():
+        await asyncio.sleep(0.2)
+        assert asyncio.get_event_loop().time() < deadline, "resume did not finish"
+
+    status = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
+    assert status == "completed"
+    assert (db.scalar("SELECT last_completed_tick FROM runs WHERE id=?", (run_id,)) or 0) == 3
+    posts = db.query("SELECT id, seq FROM posts WHERE run_id=?", (run_id,))
+    assert len(posts) == len({p["id"] for p in posts})  # no duplicate post IDs
+    seqs = [p["seq"] for p in posts if p["seq"] is not None]
+    assert len(seqs) == len(set(seqs))  # no duplicate seq values
