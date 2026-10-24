@@ -18,3 +18,11 @@ frontend/test-results/
 .demo-data/
 frontend/docs/screenshots/
 report_sample.md
+
+# Local scratch files that this checkout's file permissions prevent deleting.
+# They are untracked developer leftovers, never part of the product.
+.claude/
+FINAL_REPORT.md
+backend/_repro.py
+backend/_repro_full.py
+backend/test_real_provider.py

@@ -69,6 +69,51 @@ export interface SourceStats {
   used_by?: number;
 }
 
+// Evidence profile for one document (GET /api/sources/{id}/evidence).
+export interface SourceEvidenceChunk {
+  id: string;
+  idx: number;
+  page_start: number | null;
+  page_end: number | null;
+  heading: string | null;
+  n_words: number | null;
+  citations: number;
+  excerpt: string;
+  post_ids: string[];
+}
+
+export interface SourceEvidence {
+  source: {
+    id: string; filename: string; kind: string; status: string;
+    pages: number; created_at: string; error: string | null; sha256: string;
+  };
+  stats: { chunks: number; words: number; pages: number };
+  coverage: {
+    chunks_total: number; chunks_cited: number; citation_total: number;
+    posts_citing: number; runs: number; pct_chunks_cited: number | null;
+  };
+  brief: { summary: string; generated_by: { provider?: string; model?: string } | null };
+  issues: {
+    id: string | null; name: string; question: string; category?: string | null;
+    evidence_chunk_ids: string[]; evidence_chunks_found: number;
+    evidence_chunks_declared: number;
+  }[];
+  stakeholder_groups: {
+    name: string; description: string; size_hint: string;
+    influence?: number | null; agents: number; concerns: string[];
+  }[];
+  usage: {
+    run_id: string; name: string; status: string; created_at: string;
+    rounds: number; posts_citing: number; agents_citing: number;
+  }[];
+  findings: {
+    run_id: string; run_name: string; finding_id: string; title: string;
+    denominator: number; unit: string; rows: number;
+  }[];
+  chunks: SourceEvidenceChunk[];
+  notes: string[];
+}
+
 export interface BriefIssue {
   id: string;
   name: string;
@@ -398,10 +443,47 @@ export interface CompareSide {
   llm_calls: number;
 }
 
+export interface MixCounts { pro: number; neu: number; con: number; total: number }
+
+export interface RoundMixDiff {
+  tick: number;
+  left: MixCounts;
+  right: MixCounts;
+  delta_pro: number;
+  delta_neu: number;
+  delta_con: number;
+}
+
+export interface IssueStanceDiff {
+  issue_id: string;
+  name: string;
+  pro_label: string | null;
+  con_label: string | null;
+  left_start: number;
+  left_end: number;
+  left_movement: number;
+  right_start: number;
+  right_end: number;
+  right_movement: number;
+  difference_in_movement: number;
+  left_last_tick: number;
+  right_last_tick: number;
+  agents_left: number;
+  agents_right: number;
+}
+
 export interface CompareResponse {
   left: CompareSide;
   right: CompareSide;
-  diffs: { posts: number; fallback_posts: number; citation_total: number; rounds: number };
+  diffs: {
+    posts: number;
+    fallback_posts: number;
+    citation_total: number;
+    rounds: number;
+    rounds_mix?: RoundMixDiff[];
+    issues?: IssueStanceDiff[];
+    notes?: string[];
+  };
   label: string;
   linked?: boolean;
 }

@@ -157,7 +157,7 @@ export function Shell({ route, children }: { route: Route; children: React.React
           <>
             <nav
               className="sticky bottom-0 z-30 border-t grid"
-              style={{ gridTemplateColumns: "repeat(3, 1fr)", borderColor: "var(--line-1)", background: "var(--bg-0)" }}
+              style={{ gridTemplateColumns: `repeat(${navItems.length}, 1fr)`, borderColor: "var(--line-1)", background: "var(--bg-0)" }}
               aria-label="Primary"
             >
               {navItems.map((item) => {
@@ -169,6 +169,7 @@ export function Shell({ route, children }: { route: Route; children: React.React
                     className="flex flex-col items-center justify-center gap-1"
                     style={{ height: 60, fontSize: 10.5, fontWeight: 500, color: current ? "var(--fg-1)" : "var(--fg-3)" }}
                     aria-current={current ? "page" : undefined}
+                    aria-label={item.label}
                   >
                     <span style={{ width: 20, height: 20, display: "grid", placeItems: "center" }}>{item.icon}</span>
                     {item.label}
@@ -216,7 +217,9 @@ export function Shell({ route, children }: { route: Route; children: React.React
         {activeRun && (
           <>
             <div className="eyebrow side-label">Active run</div>
-            <a className="nav-sub" href={hrefFor({ name: "run", runId: activeRun.id })} style={{ paddingLeft: 10, alignItems: "flex-start", gap: 12 }}>
+            <a className="nav-sub" href={hrefFor({ name: "run", runId: activeRun.id })}
+               aria-label={`Open the active run: ${activeRun.name}`}
+               style={{ paddingLeft: 10, alignItems: "flex-start", gap: 12 }}>
               <span className="dot dot-run dot-pulse" style={{ marginTop: 6 }} />
               <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
                 <span className="ellipsis" style={{ fontWeight: 500 }}>{activeRun.name}</span>
@@ -229,7 +232,9 @@ export function Shell({ route, children }: { route: Route; children: React.React
         )}
 
         <div className="side-foot">
-          <a className="nav" href="#/settings" style={{ height: "auto", padding: "8px 10px", alignItems: "flex-start", gap: 12 }}>
+          <a className="nav" href="#/settings"
+             aria-label={`Provider settings: ${providerLabel}`}
+             style={{ height: "auto", padding: "8px 10px", alignItems: "flex-start", gap: 12 }}>
             <span className={providerDot} style={{ marginTop: 6 }} />
             <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
               <span>{providerLabel}</span>

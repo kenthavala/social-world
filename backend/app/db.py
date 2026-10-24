@@ -118,10 +118,32 @@ def connect() -> sqlite3.Connection:
     global _conn
     with _lock:
         if _conn is None:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-            _conn.row_factory = sqlite3.Row
-            _conn.execute("PRAGMA journal_mode=WAL")
+            try:
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise RuntimeError(
+                    f"The data directory {DATA_DIR} cannot be created ({e}). "
+                    "Set OASIS_DATA_DIR to a writable folder, or fix the folder's "
+                    "permissions, then start the app again."
+                ) from e
+            try:
+                _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+                _conn.row_factory = sqlite3.Row
+                _conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError as e:
+                # The most common first-run failure is a database file or folder the
+                # process cannot write to. Say what to do instead of a bare traceback.
+                if _conn is not None:
+                    try:
+                        _conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    _conn = None
+                raise RuntimeError(
+                    f"The simulation database at {DB_PATH} cannot be opened ({e}). "
+                    "Check that the data folder is writable by the user running the app, "
+                    "or set OASIS_DATA_DIR to a writable folder."
+                ) from e
             _conn.execute("PRAGMA foreign_keys=ON")
             _conn.execute("PRAGMA synchronous=NORMAL")
             _conn.execute("PRAGMA busy_timeout=5000")

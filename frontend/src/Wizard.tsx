@@ -307,7 +307,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
                 <span className="step-n">{done ? "✓" : s.n}</span>
                 <span className="flex flex-col items-start gap-0.5">
                   <span>{s.label}</span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--fg-4)", fontWeight: 400 }}>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--fg-3)", fontWeight: 400 }}>
                     {done ? "done" : stepStatus[s.n]}
                   </span>
                 </span>
@@ -494,6 +494,8 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
           type="file"
           className="absolute h-1 w-1 opacity-0"
           accept=".pdf,.txt,.md,.docx"
+          aria-label="Upload a source document"
+          tabIndex={-1}
           onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0], null)}
         />
       </label>
@@ -534,10 +536,13 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
         <textarea
           className="input mt-2"
           placeholder="Paste document text (min. a couple of paragraphs)…"
+          aria-label="Paste document text"
           value={pasted}
           onChange={(e) => setPasted(e.target.value)}
         />
-        <button className="btn btn-ghost mt-2" onClick={() => onUpload(null, pasted)} disabled={!pasted.trim() || busy}>
+        <button className="btn btn-ghost mt-2" onClick={() => onUpload(null, pasted)}
+                disabled={!pasted.trim() || busy}
+                aria-label="Use the pasted text as the source document">
           Use this text
         </button>
       </details>
@@ -1560,6 +1565,7 @@ function StepRun(p: {
     ["Source", p.source?.filename ?? "—"],
     ["Scenario", p.scenario.slice(0, 60) + (p.scenario.length > 60 ? "…" : "")],
     ["Issues", String(p.brief?.issues.length ?? 0)],
+    ["Stakeholder groups", String(p.brief?.stakeholder_groups.length ?? 0)],
     ["Agents / writes", `${p.agents} · ${p.writesPerTick}/round`],
     ["Rounds", String(p.ticks)],
     ["Stance mix", `Supports ${p.mix.pro}% · Undecided ${p.mix.neu}% · Opposes ${p.mix.con}%`],
@@ -1567,6 +1573,29 @@ function StepRun(p: {
     ["LLM call budget", String(p.est?.estimate.max_llm_calls ?? "—")],
     ["Provider", providerLabel],
   ], [p, providerLabel]);
+
+  // Pre-flight: what will actually run, and what is wrong or risky about it.
+  const preflight = useMemo(() => {
+    const issues = p.brief?.issues.length ?? 0;
+    const groups = p.brief?.stakeholder_groups.length ?? 0;
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    if (!p.source) errors.push("No source document selected.");
+    if (!p.brief) errors.push("No scenario brief — issues and stakeholder groups are not defined.");
+    if (p.brief && issues === 0) errors.push("The brief contains no issues.");
+    if (p.brief && groups === 0) errors.push("The brief contains no stakeholder groups.");
+    if (p.brief && groups > p.agents) {
+      warnings.push(
+        `${groups} stakeholder groups but only ${p.agents} agents: ${groups - p.agents} group(s) `
+        + "will receive no agent. The run log will name them.");
+    }
+    if (p.ticks < 2) warnings.push("Only one round is configured; stance change cannot be observed.");
+    if (p.writesPerTick === 0) {
+      warnings.push("Writes per round is 0, so no agent will post — reactions only.");
+    }
+    if (!p.scenario.trim()) warnings.push("No research question set.");
+    return { issues, groups, warnings, errors };
+  }, [p.brief, p.source, p.agents, p.ticks, p.writesPerTick, p.scenario]);
 
   return (
     <div className="panel panel-body">
@@ -1582,6 +1611,54 @@ function StepRun(p: {
             </>
           )}
       </p>
+
+      {/* Pre-flight validation: the user must see exactly what will run. */}
+      <div className="panel-2 mb-4 p-3.5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="eyebrow">Pre-launch check</span>
+          <span className="flex gap-2">
+            <span className={`badge ${preflight.errors.length ? "status-err" : "status-ok"}`}>
+              {preflight.errors.length} error{preflight.errors.length === 1 ? "" : "s"}
+            </span>
+            <span className={`badge ${preflight.warnings.length ? "status-partial" : "status-ok"}`}>
+              {preflight.warnings.length} warning{preflight.warnings.length === 1 ? "" : "s"}
+            </span>
+          </span>
+        </div>
+        <dl className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([
+            ["Issues", preflight.issues],
+            ["Groups", preflight.groups],
+            ["Agents", p.agents],
+            ["Rounds", p.ticks],
+          ] as const).map(([k, v]) => (
+            <div key={k}>
+              <dt className="t-meta">{k}</dt>
+              <dd className="mono m-0" style={{ fontSize: 16, color: "var(--fg-1)" }}>{v}</dd>
+            </div>
+          ))}
+        </dl>
+        {preflight.errors.length > 0 && (
+          <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0" role="alert">
+            {preflight.errors.map((e) => (
+              <li key={e} className="t-meta" style={{ color: "var(--err-fg)" }}>✕ {e}</li>
+            ))}
+          </ul>
+        )}
+        {preflight.warnings.length > 0 && (
+          <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
+            {preflight.warnings.map((w) => (
+              <li key={w} className="t-meta" style={{ color: "var(--warn-fg)" }}>⚠ {w}</li>
+            ))}
+          </ul>
+        )}
+        {preflight.errors.length === 0 && preflight.warnings.length === 0 && (
+          <p className="t-meta mt-2">
+            No blocking errors and no warnings. The configuration is complete.
+          </p>
+        )}
+      </div>
+
       <dl className="kv m-0" style={{ gridTemplateColumns: "168px minmax(0,1fr)", gap: "10px 16px" }}>
         {summary.map(([k, v]) => (
           <div key={k} className="contents">

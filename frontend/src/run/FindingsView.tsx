@@ -121,7 +121,7 @@ export default function FindingsView({ data }: { data: NarrativeResponse }) {
               <div className="panel-body flex flex-col gap-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <h4 className="t-h3 flex items-baseline gap-2">
-                    <span className="mono" style={{ color: "var(--fg-4)" }}>{String(i + 1).padStart(2, "0")}</span>
+                    <span className="mono" style={{ color: "var(--fg-3)" }}>{String(i + 1).padStart(2, "0")}</span>
                     {f.headline}
                   </h4>
                   <Strength value={f.strength} />

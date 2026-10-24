@@ -254,6 +254,26 @@ def main() -> int:
         check("agent display names are unique", len(names) == len(set(names)),
               f"{len(names) - len(set(names))} duplicate(s)")
 
+        # --- documents: evidence library --------------------------------------
+        ev = client.get(f"/api/sources/{source_id}/evidence")
+        check("source evidence responds", ev.status_code == 200, str(ev.status_code))
+        ed = ev.json()
+        check("evidence lists configured issues", len(ed["issues"]) == 5,
+              str(len(ed["issues"])))
+        check("evidence lists configured groups", len(ed["stakeholder_groups"]) == 6,
+              str(len(ed["stakeholder_groups"])))
+        check("evidence reports the run that used it", len(ed["usage"]) == 1,
+              str(len(ed["usage"])))
+        check("evidence reports citation coverage",
+              ed["coverage"]["citation_total"] > 0
+              and ed["coverage"]["chunks_cited"] > 0,
+              str(ed["coverage"]))
+        real_chunks = {c["id"] for c in client.get(
+            f"/api/sources/{source_id}/chunks").json()["chunks"]}
+        check("every evidence passage is a stored chunk",
+              all(c["id"] in real_chunks for c in ed["chunks"]),
+              f"{len(ed['chunks'])} passages")
+
         # --- report ------------------------------------------------------------
         rep = client.post(f"/api/runs/{run_id}/report")
         check("generate report", rep.status_code == 200, rep.text[:160])
@@ -300,6 +320,21 @@ def main() -> int:
               str(validation.status_code))
         stats = client.get(f"/api/runs/{run_id}/stats")
         check("run stats respond", stats.status_code == 200, str(stats.status_code))
+
+        # --- compare: counted diffs and the honest empty-side path --------------
+        br = client.post(f"/api/runs/{run_id}/branch", json={
+            "text": "A half-price monthly pass is announced.", "audience": "all"})
+        check("branch creates an intervention run", br.status_code == 200, str(br.status_code))
+        cmp = client.get(f"/api/runs/{run_id}/compare?other={br.json()['id']}")
+        check("compare responds", cmp.status_code == 200, str(cmp.status_code))
+        d = cmp.json()
+        check("compare reports per-round stance mix key", "rounds_mix" in d["diffs"])
+        check("compare reports per-issue stances key", "issues" in d["diffs"])
+        check("compare notes the re-run has no stance history yet",
+              any("stance-history" in n.lower() for n in d["diffs"].get("notes", [])),
+              str(d["diffs"].get("notes"))[:110])
+        check("compare is labelled a counted comparison",
+              "counted" in d["label"])
 
     print()
     print(f"RESULT: {len(PASS)} passed, {len(FAIL)} failed")

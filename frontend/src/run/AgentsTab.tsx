@@ -128,6 +128,7 @@ export default function AgentsTab({ runId, runSourceId, posts, bumpKey, onError,
           <input
             className="input"
             placeholder="Search name, @handle or group"
+            aria-label="Search agents"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -372,7 +373,7 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey, r
                   <ul className="flex list-none flex-col gap-1.5 p-0 text-xs">
                     {detail.memories.slice(0, 12).map((m, i) => (
                       <li key={i} className="panel-2 p-2">
-                        <span className="mono" style={{ color: "var(--fg-4)" }}>R{m.tick}</span>{" "}
+                        <span className="mono" style={{ color: "var(--fg-3)" }}>R{m.tick}</span>{" "}
                         <span className="badge" style={{ fontSize: 10 }}>{m.kind}</span>{" "}
                         {m.text}
                       </li>
@@ -403,9 +404,9 @@ function AgentDrawer({ runId, agentId, runSourceId, onClose, onError, bumpKey, r
                           <span className={`stance stance-${postOverallStance(p)}`}>
                             <span className={`sg sg-${postOverallStance(p)}`} />{postOverallStance(p).toUpperCase()}
                           </span>
-                          <span className="mono" style={{ color: "var(--fg-4)" }}>R{String(p.tick).padStart(2, "0")}</span>
+                          <span className="mono" style={{ color: "var(--fg-3)" }}>R{String(p.tick).padStart(2, "0")}</span>
                           {Boolean(p.is_fallback) && <span className="badge s-warn">fallback</span>}
-                          <span className="mono ml-auto" style={{ color: "var(--fg-4)", fontSize: 11 }}>
+                          <span className="mono ml-auto" style={{ color: "var(--fg-3)", fontSize: 11 }}>
                             ♥ {p.likes} · ↻ {p.reposts} · ↩ {p.replies}
                           </span>
                         </div>

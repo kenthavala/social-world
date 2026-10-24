@@ -193,6 +193,7 @@ export default function SettingsPage({ onSaved, onError }: {
               <span className="label">Model</span>
               <div className="flex gap-2">
                 <input className="input mono" value={field("llm_model")}
+                       aria-label="Model"
                        onChange={(e) => setField("llm_model", e.target.value)} />
                 <button className="btn btn-ghost flex-none" onClick={fetchModels} disabled={busy}>
                   <RefreshCw size={13} /> List
@@ -342,6 +343,7 @@ export default function SettingsPage({ onSaved, onError }: {
                     className="input mono"
                     type="password"
                     placeholder={`paste ${envVar}`}
+                    aria-label={`${envVar} value`}
                     autoComplete="off"
                     onChange={(e) => { dirty.current = true; setKeys((k) => ({ ...k, [envVar]: e.target.value })); }}
                   />
@@ -397,6 +399,7 @@ function RedactionSection({ onError }: { onError: (e: unknown) => void }) {
           )}
         </p>
         <textarea className="input" value={message} onChange={(e) => setMessage(e.target.value)}
+                  aria-label="Sample text to run through the redaction rules"
                   placeholder="e.g. Authorization: Bearer sk-abc123..." />
         <div className="mt-2.5 flex items-center gap-2">
           <button className="btn btn-ghost" onClick={preview} disabled={!message.trim() || busy}>

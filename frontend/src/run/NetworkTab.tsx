@@ -43,9 +43,28 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
   roundFilter?: number | null;
   onSelectRound?: (round: number | null) => void;
 }) {
+  // Selection is user intent, so it must survive a tab switch (which unmounts and
+  // remounts this component). Stored per run, restored on mount, cleared only when
+  // the entity genuinely no longer exists at the selected round.
+  const SEL_KEY = `tsw-net-sel-${runId}`;
+  const PICK_KEY = `tsw-net-picked-${runId}`;
   const [graph, setGraph] = useState<GraphResponse | null>(null);
-  const [sel, setSel] = useState<Selection>(null);
-  const [picked, setPicked] = useState<string[]>([]);
+  const [sel, setSel] = useState<Selection>(() => {
+    try { return JSON.parse(sessionStorage.getItem(SEL_KEY) || "null") as Selection; }
+    catch { return null; }
+  });
+  const [picked, setPicked] = useState<string[]>(() => {
+    try {
+      const v = JSON.parse(sessionStorage.getItem(PICK_KEY) || "[]");
+      return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem(SEL_KEY, JSON.stringify(sel)); } catch { /* ignore */ }
+  }, [sel, SEL_KEY]);
+  useEffect(() => {
+    try { sessionStorage.setItem(PICK_KEY, JSON.stringify(picked)); } catch { /* ignore */ }
+  }, [picked, PICK_KEY]);
   const [view, setView] = useState<"agents" | "groups" | "matrix">("agents");
   const [panel, setPanel] = useState<"detail" | "list">("list");
   const [query, setQuery] = useState("");
@@ -468,7 +487,7 @@ export default function NetworkTab({ runId, ticks, bumpKey, onError, roundFilter
                          value={roundFilter ?? Math.max(1, ticks)}
                          onChange={(e) => onSelectRound?.(Number(e.target.value))}
                          className="w-full" aria-label="Connections round" />
-                  <div className="mono flex justify-between" style={{ fontSize: 10, color: "var(--fg-4)" }}>
+                  <div className="mono flex justify-between" style={{ fontSize: 10, color: "var(--fg-3)" }}>
                     <span>round 01</span>
                     <span>{roundFilter == null ? "latest recorded state" : `state at round ${roundFilter}`}</span>
                     <span>round {String(ticks).padStart(2, "0")}</span>
@@ -668,7 +687,7 @@ function DetailPanel({ sel, agent, group, edge, nodes, edges, pickedAgents, roun
                       {outgoingEdge ? "→" : "←"}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{handleOf(other)}</span>
-                    <span className="mono flex-none" style={{ fontSize: 11, color: "var(--fg-4)" }}>
+                    <span className="mono flex-none" style={{ fontSize: 11, color: "var(--fg-3)" }}>
                       {e.weight.toFixed(2)}
                     </span>
                   </button>

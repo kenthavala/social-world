@@ -64,16 +64,24 @@ export function usePosts(runId: string | null, trigger: unknown) {
 
 export function useRunDetail(runId: string | null, trigger: unknown) {
   const [run, setRun] = useState<RunDetail | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loaded, setLoaded] = useState(false);
   const reload = useCallback(async () => {
-    if (!runId) return;
+    if (!runId) { setLoaded(true); return; }
     try {
       setRun(await api.getRun(runId));
-    } catch {
-      /* ignore */
+      setError(null);
+    } catch (e) {
+      // A missing or unreachable run must surface, not leave the room on a
+      // spinner forever.
+      setError(e);
+    } finally {
+      setLoaded(true);
     }
   }, [runId]);
   useEffect(() => {
+    setLoaded(false);
     void reload();
   }, [reload, trigger]);
-  return { run, reload };
+  return { run, reload, error, loaded };
 }

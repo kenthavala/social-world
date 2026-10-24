@@ -47,7 +47,7 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
     try { sessionStorage.setItem(TAB_STORE, t); } catch { /* ignore */ }
   };
 
-  const { run, reload: reloadRun } = useRunDetail(runId, bump);
+  const { run, reload: reloadRun, loaded } = useRunDetail(runId, bump);
   const { posts, reload: reloadPosts } = usePosts(runId, bump);
 
   const headerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +166,31 @@ export default function RunPage({ runId, onBack, onError, sourceId, postId }: {
     return () => window.clearInterval(t);
   }, [playing, scrubbable]);
 
-  if (!run) return <div className="px-8 py-6"><Spinner label="Loading run…" /></div>;
+  if (!run) {
+    if (!loaded) return <div className="px-8 py-6"><Spinner label="Loading run…" /></div>;
+    // The run could not be loaded. Say so, and give a way out — never spin forever.
+    return (
+      <div className="px-4 py-8 md:px-8">
+        <div className="empty panel" role="alert">
+          <span className="empty-ic">
+            <svg className="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+              <circle cx="8" cy="8" r="6" /><path d="M8 5v3.5M8 11v.01" />
+            </svg>
+          </span>
+          <p className="t-h3">This simulation could not be opened</p>
+          <p className="t-meta" style={{ maxWidth: 460 }}>
+            {runId ? <>No run with id <code className="mono">{runId}</code> was found.</> : "No run was specified."}
+            {" "}It may have been deleted, or the backend may be unreachable.
+          </p>
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
+            <button className="btn" onClick={() => void reloadRun()}>Try again</button>
+            <a className="btn btn-primary" href="#/simulations">Back to simulations</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const agentCount = run.agents;
   const canControl = ["draft", "ready", "running", "seeding", "paused", "interrupted"].includes(run.status);

@@ -171,6 +171,177 @@ def list_sources() -> dict:
                         | {"has_brief": bool(r["brief_json"])} for r in rows]}
 
 
+@router.get("/sources/{source_id}/evidence")
+def source_evidence(source_id: str) -> dict:
+    """An evidence profile for one document.
+
+    Every relationship returned here is derived from stored rows: the brief that was
+    generated for this source, the runs that used it, the posts that cited its chunks
+    and the findings those runs produced. Where a relationship cannot be derived the
+    field is empty and `notes` says so — nothing is invented for display.
+    """
+    src = db.query_one("SELECT * FROM sources WHERE id=?", (source_id,))
+    if src is None:
+        raise AppError("source not found", component="api", stage="evidence", status_code=404)
+
+    brief = db.uj(src["brief_json"], {}) if src["brief_json"] else {}
+    chunk_rows = db.query(
+        "SELECT id, idx, page_start, page_end, heading, n_words, text FROM chunks"
+        " WHERE source_id=? ORDER BY idx", (source_id,))
+    chunk_ids = {c["id"] for c in chunk_rows}
+
+    # Citation counts, restricted to this source's chunks.
+    counts: dict[str, int] = {}
+    posts_by_chunk: dict[str, list[str]] = {}
+    for p in db.query(
+            "SELECT id, run_id, tick, agent_id, cited_chunk_ids_json FROM posts"
+            " WHERE cited_chunk_ids_json IS NOT NULL"):
+        for cid in (db.uj(p["cited_chunk_ids_json"], []) or []):
+            if cid not in chunk_ids:
+                continue
+            counts[cid] = counts.get(cid, 0) + 1
+            posts_by_chunk.setdefault(cid, []).append(p["id"])
+
+    runs = [dict(r) for r in db.query(
+        "SELECT id, name, status, created_at, last_completed_tick, config_json"
+        " FROM runs WHERE source_id=? ORDER BY created_at DESC LIMIT 50", (source_id,))]
+
+    # Per-run usage: posts that cited this source and the agents they came from.
+    usage = []
+    total_posts_citing = 0
+    for r in runs:
+        run_posts = db.query(
+            "SELECT id, agent_id, cited_chunk_ids_json FROM posts WHERE run_id=?",
+            (r["id"],))
+        citing = 0
+        agents: set[str] = set()
+        for p in run_posts:
+            cited = db.uj(p["cited_chunk_ids_json"], []) or []
+            if any(c in chunk_ids for c in cited):
+                citing += 1
+                agents.add(p["agent_id"])
+        total_posts_citing += citing
+        usage.append({
+            "run_id": r["id"], "name": r["name"], "status": r["status"],
+            "created_at": r["created_at"],
+            "rounds": r["last_completed_tick"] or 0,
+            "posts_citing": citing,
+            "agents_citing": len(agents),
+        })
+
+    # Stakeholder groups: configured in the brief, with the agents actually seeded
+    # for them across the runs that used this source.
+    agents_by_group: dict[str, int] = {}
+    for r in runs:
+        for a in db.query(
+                "SELECT stakeholder_group, COUNT(*) AS n FROM agents WHERE run_id=?"
+                " GROUP BY stakeholder_group", (r["id"],)):
+            key = a["stakeholder_group"] or "Unassigned"
+            agents_by_group[key] = agents_by_group.get(key, 0) + a["n"]
+    groups = []
+    for g in (brief.get("stakeholder_groups") or []):
+        name = g.get("name") or ""
+        groups.append({
+            "name": name,
+            "description": g.get("description") or "",
+            "size_hint": g.get("size_hint") or "medium",
+            "influence": g.get("influence"),
+            "agents": agents_by_group.get(name, 0),
+            "concerns": g.get("concerns") or [],
+        })
+    for extra, n in agents_by_group.items():
+        if extra not in {g["name"] for g in groups}:
+            groups.append({"name": extra, "description": "", "size_hint": "medium",
+                           "influence": None, "agents": n, "concerns": []})
+
+    # Issues: configured in the brief, with the chunks each one points at.
+    issues = []
+    for i in (brief.get("issues") or []):
+        cited_ids = [c for c in (i.get("evidence_chunk_ids") or []) if c in chunk_ids]
+        issues.append({
+            "id": i.get("id"), "name": i.get("name") or i.get("id"),
+            "question": i.get("question") or "",
+            "category": i.get("category"),
+            "evidence_chunk_ids": cited_ids,
+            "evidence_chunks_found": len(cited_ids),
+            "evidence_chunks_declared": len(i.get("evidence_chunk_ids") or []),
+        })
+
+    # Findings that cite this source: taken from the most recent completed run.
+    from app.analytics.findings import build_findings
+    findings_out = []
+    source_run = next((r for r in runs if r["status"] == "completed"), None)
+    if source_run is not None:
+        try:
+            built = build_findings(source_run["id"]).get("findings", [])
+        except Exception:  # noqa: BLE001 — a findings failure must not break the page
+            built = []
+        for f in built:
+            rows = [row for row in f.get("rows", [])
+                    if (row.get("chunk_id") in chunk_ids) or ("chunk_id" not in row)]
+            if f["id"] in ("most_cited", "pages"):
+                rows = [row for row in rows if row.get("chunk_id") in chunk_ids]
+            if rows:
+                findings_out.append({
+                    "run_id": source_run["id"], "run_name": source_run["name"],
+                    "finding_id": f["id"], "title": f["title"],
+                    "denominator": f["denominator"], "unit": f["unit"],
+                    "rows": len(rows),
+                })
+
+    cited_chunks = [c for c in chunk_rows if counts.get(c["id"], 0) > 0]
+    top_chunks = sorted(chunk_rows, key=lambda c: (-counts.get(c["id"], 0), c["idx"]))[:12]
+
+    notes = []
+    if not brief:
+        notes.append("No scenario brief has been generated for this document yet, so "
+                     "issues and stakeholder groups cannot be listed.")
+    if not runs:
+        notes.append("No simulation has used this document yet.")
+    if chunk_rows and not cited_chunks:
+        notes.append("No recorded post cites this document, so evidence coverage is zero.")
+
+    return {
+        "source": {
+            "id": src["id"], "filename": src["filename"], "kind": src["kind"],
+            "status": src["status"], "pages": src["pages"],
+            "created_at": src["created_at"], "error": src["error"],
+            "sha256": (src["sha256"] or "")[:16],
+        },
+        "stats": {
+            "chunks": len(chunk_rows),
+            "words": sum((c["n_words"] or 0) for c in chunk_rows),
+            "pages": src["pages"],
+        },
+        "coverage": {
+            "chunks_total": len(chunk_rows),
+            "chunks_cited": len(cited_chunks),
+            "citation_total": sum(counts.values()),
+            "posts_citing": total_posts_citing,
+            "runs": len(runs),
+            "pct_chunks_cited": (round(100 * len(cited_chunks) / len(chunk_rows))
+                                 if chunk_rows else None),
+        },
+        "brief": {
+            "summary": brief.get("summary") or "",
+            "generated_by": brief.get("generated_by") or None,
+        },
+        "issues": issues,
+        "stakeholder_groups": groups,
+        "usage": usage,
+        "findings": findings_out,
+        "chunks": [{
+            "id": c["id"], "idx": c["idx"],
+            "page_start": c["page_start"], "page_end": c["page_end"],
+            "heading": c["heading"], "n_words": c["n_words"],
+            "citations": counts.get(c["id"], 0),
+            "excerpt": (c["text"] or "")[:400],
+            "post_ids": posts_by_chunk.get(c["id"], [])[:5],
+        } for c in top_chunks],
+        "notes": notes,
+    }
+
+
 @router.get("/sources/{source_id}")
 def get_source(source_id: str) -> dict:
     return _source_stats(source_id)

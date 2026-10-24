@@ -92,6 +92,9 @@ export function uploadSourceText(text: string, filename = "pasted.txt"): Promise
 
 export const getSource = (id: string) => call<SourceStats>(`/api/sources/${id}`);
 
+export const getSourceEvidence = (id: string) =>
+  call<import("./types").SourceEvidence>(`/api/sources/${id}/evidence`);
+
 export const generateBrief = (
   id: string,
   scenario: string,

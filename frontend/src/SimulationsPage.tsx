@@ -244,6 +244,7 @@ export default function SimulationsPage({ onOpen, onNew, onError, settingsVersio
         <span className="input-wrap min-w-52 flex-1" style={{ maxWidth: 360 }}>
           <Search className="ic" aria-hidden />
           <input className="input" placeholder="Search by name, source or run ID"
+                 aria-label="Search simulations"
                  value={q} onChange={(e) => setQ(e.target.value)} />
         </span>
         {FILTERS.map((f) => (
