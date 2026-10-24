@@ -100,7 +100,8 @@ def _ingest_new(data: bytes, name: str, sha: str, existing_id: Optional[str] = N
                    (str(e)[:300], source_id))
         raise AppError(f"could not extract text: {str(e)[:200]}", component="ingest",
                        stage="extract", error_type="extract_failed")
-    scanned_error = extract_mod.scanned_check(extracted["pages"])
+    scanned_error = (extract_mod.scanned_check(extracted["pages"])
+                     if suffix == ".pdf" else None)
     if scanned_error:
         db.execute("UPDATE sources SET status='failed', error=? WHERE id=?",
                    (scanned_error, source_id))

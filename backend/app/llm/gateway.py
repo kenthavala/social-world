@@ -142,6 +142,15 @@ def _hint_for(provider: str, status: Optional[int], error_text: str) -> str | No
     if status == 404:
         return (f"404 from {provider}: model or endpoint not found. Pick another model "
                 "(a wrong wire format also shows up as 404).")
+    if status == 410:
+        return (f"410 from {provider}: the model or endpoint has been retired (Gone). "
+                "Pick a model the provider still serves in Settings, then resume the run.")
+    if "empty response" in error_text.lower():
+        return (f"{provider} returned an empty response repeatedly. Check the model name and "
+                "max-token setting, or switch provider; the run is paused and resumable.")
+    if "timeout" in error_text.lower() or "timed out" in error_text.lower():
+        return (f"{provider} timed out after the configured limit. Raise LLM_TIMEOUT_SECONDS, "
+                "reduce writes per tick, or switch provider; completed rounds are kept.")
     if status == 429:
         return (f"429 from {provider}: rate/budget limit hit. The gateway retries automatically; "
                 "reduce writes per tick or lower LLM_RPM if it keeps happening.")
@@ -292,6 +301,10 @@ class Gateway:
 
             # one repair retry with the validation error
             note = self._parse_note(text)
+            _record(run_id, task, provider_name, model, rhash, _canonical(messages)[:8000],
+                    text, 0, "parse_failed", None,
+                    f"invalid JSON before repair ({note})",
+                    meta.get("tokens_in"), meta.get("tokens_out"), meta.get("latency_ms", 0))
             repair_messages = messages + [{
                 "role": "user",
                 "content": f"Your previous output was invalid JSON ({note}). Return ONLY the corrected JSON, nothing else.",
@@ -325,6 +338,13 @@ class Gateway:
                                                allow_fallback, depth)
             if moved is not None:
                 return moved
+            # Two invalid answers in a row are not a transient fault: stop instead of
+            # spending the remaining retries on the same unparseable output.
+            raise AppError(
+                last_error, component="llm", stage="generate", provider=provider_name,
+                model=model, error_type="provider_failed",
+                hint="The model returned text that is not the requested JSON twice in a row. "
+                     "Switch model or lower the temperature; the run is paused and resumable.")
 
         # Retries exhausted on this model: try the fallback chain before failing.
         moved = await self._maybe_fallback(task, messages, expect, run_id, rhash,

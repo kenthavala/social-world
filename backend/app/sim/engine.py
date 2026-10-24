@@ -212,7 +212,17 @@ async def _run_worker(run_id: str) -> None:
                     _fail_run(run_id, e)
                 break
             if ctx.failure_streak >= 3 and ctx.failure_rate() > 0.5:
-                ctx.pause_self()
+                # Most write calls are failing: pause with the reason attached, so the
+                # run is resumable and the operator is told what to fix. A bare pause
+                # with no error left the run looking healthy but idle.
+                detail = f" Last error: {ctx.last_write_error}." if ctx.last_write_error else ""
+                _pause_with_reason(
+                    run_id,
+                    f"{ctx.failure_streak} of the last {len(ctx.failure_history)} write "
+                    f"calls failed.{detail}",
+                    "Check the provider and its key in Settings, then Resume. Completed "
+                    "rounds are kept and agents that could not be written are recorded as "
+                    "template reposts.")
             ctx.last_completed = tick
             emit(run_id, "tick_completed", {"tick": tick, "metrics": ctx.last_metrics})
             if ctx.budget_exhausted:
@@ -283,6 +293,7 @@ class Context:
         self.post_deltas: dict[str, dict[str, int]] = {}
         self.reflection_snapshot: dict[str, dict[str, float]] = {}
         self.failure_streak = 0
+        self.last_write_error = ""   # why the most recent write batch failed, if any
         self.baseline_calls = current_used(run_id)
         self._post_seq: dict[int, int] = {}
         self._run_seq = int(db.scalar(
@@ -458,12 +469,56 @@ async def seed_run(run_id: str, gateway) -> int:
     return len(agents)
 
 
+async def seed_run_guarded(run_id: str, gateway) -> int:
+    """Seed, and never leave the run stuck in 'seeding'.
+
+    A seed that raises used to leave the row at 'seeding' for ever: delete then
+    returned 409 ("stop the run before deleting it"), no new run could start, and
+    Resume refused because only paused/interrupted runs are resumable. The seed is
+    the only lifecycle step without a recovery policy, so it gets one here, shared
+    by the /seed endpoint and the Start/Resume background path:
+
+      * retryable provider/config errors -> 'paused' (resumable, hint recorded)
+      * anything else                   -> 'failed' (actionable error recorded)
+      * task cancelled / stop requested -> 'interrupted' (resumable)
+
+    Agents and edges are written in one transaction at the end of seeding, so a
+    failure leaves no half-built population behind.
+    """
+    try:
+        return await seed_run(run_id, gateway)
+    except BudgetExhausted as e:
+        _pause_with_reason(run_id, f"LLM budget reached while seeding: {e}",
+                           "Raise the run's call budget, then resume.")
+        raise
+    except AppError as e:
+        if _should_pause(e):
+            _pause_with_reason(run_id, e.message, e.hint or "")
+        else:
+            _fail_run(run_id, e)
+        raise
+    except asyncio.CancelledError:
+        # Stop/cancel during seeding: keep the run resumable instead of stranding it.
+        db.execute("UPDATE runs SET status='interrupted', updated_at=?, finished_at=? WHERE id=?",
+                   (_now(), _now(), run_id))
+        emit(run_id, "run_status", {"status": "interrupted"})
+        raise
+    except Exception as e:  # noqa: BLE001 — a seed bug must not wedge the run
+        err = AppError(f"seeding failed: {type(e).__name__}: {e}",
+                       component="engine", stage="seed", error_type="internal")
+        _fail_run(run_id, err)
+        raise err from e
+
+
 async def seed_and_start(run_id: str, gateway, *, resume: bool = False) -> None:
     """Background path for Start/Resume: seed if needed, then run. Never leaves
     a client disconnect responsible for finishing a seed."""
     try:
         if (db.scalar("SELECT COUNT(*) FROM agents WHERE run_id=?", (run_id,)) or 0) == 0:
-            await seed_run(run_id, gateway)
+            try:
+                await seed_run_guarded(run_id, gateway)
+            except (AppError, BudgetExhausted):
+                return  # the guarded seed already recorded paused/failed/interrupted
         status = db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))
         allowed = {"ready", "paused", "interrupted", "draft"} if resume else {"ready", "draft"}
         if status in allowed:
@@ -699,7 +754,13 @@ async def do_tick(ctx: Context, tick: int) -> int:
         for r in results:
             if isinstance(r, BudgetExhausted):
                 ctx.budget_exhausted = True
-        ctx.failure_history.extend(1.0 if isinstance(r, Exception) else 0.0 for r in results)
+            elif isinstance(r, Exception):
+                # Remember why the batch failed: a run that pauses on repeated write
+                # failures must be able to tell the operator what went wrong.
+                ctx.last_write_error = f"{type(r).__name__}: {r}"[:200]
+        ctx.failure_history.extend(
+            1.0 if isinstance(r, Exception) and not isinstance(r, BudgetExhausted) else 0.0
+            for r in results)
         ctx.failure_history = ctx.failure_history[-3:]
         ctx.failure_streak = sum(1 for f in ctx.failure_history if f > 0.5)
     for a in speakers:

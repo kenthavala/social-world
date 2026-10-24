@@ -25,6 +25,29 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _int_or(value: Any, default: int) -> int:
+    """Coerce a config value to int, treating missing/blank/garbage as the default.
+
+    `0` is a real value (zero agents must clamp to 1, zero writes must stay zero),
+    so it must not be swallowed by a truthiness check.
+    """
+    if value is None or value == "":
+        return int(default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _float_or(value: Any, default: float) -> float:
+    if value is None or value == "":
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def _clamp_config(cfg: dict) -> dict:
     """Clamp run configuration to safe, documented bounds.
 
@@ -33,15 +56,16 @@ def _clamp_config(cfg: dict) -> dict:
     rejected, so a misconfigured request cannot crash the run; the UI should warn
     when the user's value differs from what was sent.
     """
+    mix = cfg.get("pop_mix") or {}
     out = {
-        "agents": max(1, min(500, int(cfg.get("agents", 16) or 16))),
-        "ticks": max(1, min(500, int(cfg.get("ticks", 12) or 12))),
-        "writes_per_tick": max(0, min(50, int(cfg.get("writes_per_tick", 4) or 4))),
-        "pop_mix": {k: max(0.0, min(1.0, float((cfg.get("pop_mix") or {}).get(k, d))))
+        "agents": max(1, min(500, _int_or(cfg.get("agents"), 16))),
+        "ticks": max(1, min(500, _int_or(cfg.get("ticks"), 12))),
+        "writes_per_tick": max(0, min(50, _int_or(cfg.get("writes_per_tick"), 4))),
+        "pop_mix": {k: max(0.0, min(1.0, _float_or(mix.get(k), d)))
                     for k, d in (("pro", 0.3), ("con", 0.3), ("undecided", 0.4))},
-        "seed": int(cfg.get("seed", random.randint(0, 2**31 - 1))),
-        "write_batch": max(1, min(5, int(cfg.get("write_batch", 3) or 3))),
-        "reflect_every": max(0, min(20, int(cfg.get("reflect_every", 5) or 5))),
+        "seed": _int_or(cfg.get("seed"), random.randint(0, 2**31 - 1)),
+        "write_batch": max(1, min(5, _int_or(cfg.get("write_batch"), 3))),
+        "reflect_every": max(0, min(20, _int_or(cfg.get("reflect_every"), 5))),
         "backfire": bool(cfg.get("backfire", True)),
     }
     est = budget_mod.estimate({"agents": out["agents"], "ticks": out["ticks"],
@@ -223,7 +247,7 @@ async def seed_run(run_id: str) -> dict:
         raise AppError(f"cannot seed a run in state '{r['status']}'",
                        component="api", stage="seed", status_code=409)
     from app.llm.gateway import gateway
-    n = await engine.seed_run(run_id, gateway)
+    n = await engine.seed_run_guarded(run_id, gateway)
     return {"agents": n, "status": db.scalar("SELECT status FROM runs WHERE id=?", (run_id,))}
 
 
