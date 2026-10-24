@@ -121,6 +121,7 @@ export function Shell({ route, children }: { route: Route; children: React.React
   }, [activeRun?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const navItems = [
+    { name: "home", label: "Home", icon: <SimIcon />, href: "#/", count: null },
     { name: "simulations", label: "Simulations", icon: <SimIcon />, href: "#/simulations", count: state.sims.length || null },
     { name: "documents", label: "Sources", icon: <DocIcon />, href: "#/documents", count: state.docs },
     { name: "settings", label: "Settings", icon: <SettingsIcon />, href: "#/settings", count: null },

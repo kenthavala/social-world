@@ -5,6 +5,7 @@ import Wizard from "./Wizard";
 import RunPage from "./RunPage";
 import SettingsPage from "./SettingsPage";
 import SimulationsPage from "./SimulationsPage";
+import HomePage from "./HomePage";
 import DocumentsPage from "./DocumentsPage";
 import ComparePage from "./ComparePage";
 import { Shell, useHashRoute } from "./shell";
@@ -57,6 +58,10 @@ export default function App() {
 
       <div className={isRun ? "pb-16" : "mx-auto w-full max-w-[1200px] px-4 pb-16 md:px-8"}>
         <ErrorBanner err={err} onDismiss={() => setErr(null)} />
+        {route.name === "home" && (
+          <HomePage onOpen={openRun} onNew={() => navigate({ name: "wizard" })}
+                    onError={setErr} settingsVersion={settingsVersion} />
+        )}
         {route.name === "simulations" && (
           <SimulationsPage onOpen={openRun} onNew={() => navigate({ name: "wizard" })}
                             onError={setErr} settingsVersion={settingsVersion} />

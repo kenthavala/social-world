@@ -159,6 +159,37 @@ export default function HomePage({ onNew, onOpen, onError, settingsVersion }: {
           </ol>
         </section>
 
+        {/* what this is / is not — stated before any numbers appear */}
+        <section aria-label="What this product does and does not claim"
+                 className="panel" style={{ borderLeft: "3px solid var(--accent)" }}>
+          <div className="panel-body grid gap-4 md:grid-cols-3">
+            <div>
+              <div className="eyebrow">What it does</div>
+              <p className="t-body fg-2 mt-1">
+                Builds a population of modelled agents from your document and observes how they
+                argue about the issues you define. Every post, stance and connection is recorded
+                and counted.
+              </p>
+            </div>
+            <div>
+              <div className="eyebrow">What you get</div>
+              <p className="t-body fg-2 mt-1">
+                A findings briefing, an inspecting agent list, the recorded network, a quality
+                diagnostic and a written report — each labelled by whether it is source-derived,
+                simulated, counted or generated.
+              </p>
+            </div>
+            <div>
+              <div className="eyebrow" style={{ color: "var(--warn-fg)" }}>What it does not claim</div>
+              <p className="t-body fg-2 mt-1">
+                This is not a survey or a forecast. Predictive accuracy has not yet been
+                externally validated, and the Quality score measures configuration, not
+                real-world accuracy.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* active run */}
         {active && (
           <section className="panel" aria-labelledby="active-run-title">

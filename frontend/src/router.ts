@@ -1,7 +1,8 @@
 // Tiny hash router: survives refresh, no dependencies.
-// Routes: #/simulations  #/documents  #/settings  #/new  #/run/<id>  #/compare?a=&b=
+// Routes: #/ (home)  #/simulations  #/documents  #/settings  #/new  #/run/<id>  #/compare?a=&b=
 
 export type Route =
+  | { name: "home" }
   | { name: "simulations" }
   | { name: "documents"; sourceId?: string }
   | { name: "settings" }
@@ -37,11 +38,14 @@ export function parseHash(hash: string): Route {
     return { name: "documents", sourceId: params.get("source") || undefined };
   }
   if (path === "/settings") return { name: "settings" };
+  // The bare root is the product home; "/simulations" is the list view.
+  if (path === "/") return { name: "home" };
   return { name: "simulations" };
 }
 
 export function hrefFor(route: Route): string {
   switch (route.name) {
+    case "home": return "#/";
     case "simulations": return "#/simulations";
     case "documents":
       return route.sourceId

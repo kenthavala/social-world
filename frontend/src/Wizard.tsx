@@ -8,10 +8,16 @@ import { sourceStatusMeta, sourceStatusPill } from "./status";
 
 const STEPS = [
   { n: 1, label: "Source" },
-  { n: 2, label: "Scenario" },
-  { n: 3, label: "Agents" },
-  { n: 4, label: "Review" },
+  { n: 2, label: "Question" },
+  { n: 3, label: "Issues" },
+  { n: 4, label: "Stakeholders" },
+  { n: 5, label: "Population" },
+  { n: 6, label: "Settings" },
+  { n: 7, label: "Review" },
+  { n: 8, label: "Launch" },
 ];
+
+const LAST_STEP = STEPS.length;
 
 const PRESETS = [
   { name: "Quick", agents: 8, ticks: 8, writes_per_tick: 4 },
@@ -95,7 +101,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
       }
 
       if (draft) {
-        if (draft.step) setStep(Math.min(4, Math.max(1, draft.step)));
+        if (draft.step) setStep(Math.min(LAST_STEP, Math.max(1, draft.step)));
         if (draft.name) setName(draft.name);
         if (draft.scenario) setScenario(draft.scenario);
         if (draft.agents) setAgents(draft.agents);
@@ -209,7 +215,10 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
     setBusy(true);
     onError(null);
     try {
-      const r = await api.generateBrief(source.source_id, scenario);
+      const r = await api.generateBrief(source.source_id, scenario, {
+        max_issues: 5,
+        max_groups: Math.max(3, Math.min(20, Math.floor(agents / 2))),
+      });
       setBrief(r.brief);
       setEdit(r.brief);
     } catch (e) {
@@ -253,12 +262,20 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
   const stepStatus = useMemo(() => {
     const s: Record<number, string> = {
       1: source ? `${source.pages} pp · ${source.chunks} chunks` : "Required — upload or choose a document",
-      2: brief ? `${brief.issues.length} issues · ${brief.stakeholder_groups.length} groups` : "Required — name and research brief",
-      3: `${agents} agents · ${ticks} rounds · ${writesPerTick}/round`,
-      4: est ? `${ticks} rounds · ≤ ${est.estimate.max_llm_calls} LLM calls` : `${ticks} rounds`,
+      2: scenario.trim() ? "Research question set" : "Required — describe what you want to learn",
+      3: edit || brief
+        ? `${(edit ?? brief)!.issues.length} issue(s) defined`
+        : "Draft the scenario first",
+      4: edit || brief
+        ? `${(edit ?? brief)!.stakeholder_groups.length} group(s) defined`
+        : "Draft the scenario first",
+      5: `${agents} agents · ${ticks} rounds`,
+      6: `${writesPerTick}/round · seed ${seed}`,
+      7: est ? `≤ ${est.estimate.max_llm_calls} LLM calls` : "Review configuration",
+      8: "Start the simulation",
     };
     return s;
-  }, [source, brief, agents, ticks, writesPerTick, est]);
+  }, [source, brief, edit, scenario, agents, ticks, writesPerTick, seed, est]);
 
   return (
     <div className="pt-6 md:pt-8">
@@ -267,7 +284,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
           <div className="eyebrow">New simulation</div>
           <div className="mt-1 flex flex-wrap items-center gap-2 t-meta">
             <span className="badge" style={{ borderStyle: "dashed" }}>DRAFT · AUTOSAVED</span>
-            <span>{STEPS[step - 1].label} — step {step} of 4</span>
+            <span>{STEPS[step - 1].label} — step {step} of {LAST_STEP}</span>
           </div>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={onCancel}>
@@ -281,7 +298,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
           const active = s.n === step;
           const done = s.n < step;
           return (
-            <span key={s.n} className="flex items-center" style={{ flex: s.n < 4 ? "1 1 auto" : "0 0 auto" }}>
+            <span key={s.n} className="flex items-center" style={{ flex: s.n < LAST_STEP ? "1 1 auto" : "0 0 auto" }}>
               <button
                 className={`step ${done ? "is-done" : ""} ${active ? "is-current" : ""}`}
                 onClick={() => s.n < step && setStep(s.n)}
@@ -295,7 +312,7 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
                   </span>
                 </span>
               </button>
-              {s.n < 4 && <span className={`step-line ${done ? "is-done" : ""}`} />}
+              {s.n < LAST_STEP && <span className={`step-line ${done ? "is-done" : ""}`} />}
             </span>
           );
         })}
@@ -304,11 +321,13 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
       {step === 1 && <StepSource source={source} busy={busy} onUpload={handleUpload} onChoose={chooseFromLibrary} onNext={() => setStep(2)} />}
       {step === 2 && (
         <StepBrief
+          mode="question"
           sourceId={source?.source_id ?? null}
           name={name} setName={setName}
           scenario={scenario} setScenario={setScenario}
           brief={brief} setBrief={setBrief}
           edit={edit} setEdit={setEdit}
+          agents={agents} maxGroups={Math.max(3, Math.min(20, Math.floor(agents / 2)))}
           busy={busy}
           onError={onError}
           onGenerate={handleBrief}
@@ -317,21 +336,60 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
         />
       )}
       {step === 3 && (
-        <StepAgents
-          agents={agents} setAgents={setAgents}
-          ticks={ticks} setTicks={setTicks}
-          writesPerTick={writesPerTick} setWritesPerTick={setWritesPerTick}
-          seed={seed} setSeed={setSeed}
-          mix={mix} setMix={setMix}
-          brief={brief}
-          est={est}
-          preset={preset} applyPreset={applyPreset}
+        <StepBrief
+          mode="issues"
+          sourceId={source?.source_id ?? null}
+          name={name} setName={setName}
+          scenario={scenario} setScenario={setScenario}
+          brief={brief} setBrief={setBrief}
+          edit={edit} setEdit={setEdit}
+          agents={agents} maxGroups={Math.max(3, Math.min(20, Math.floor(agents / 2)))}
+          busy={busy}
+          onError={onError}
+          onGenerate={handleBrief}
           onBack={() => setStep(2)}
           onNext={() => setStep(4)}
         />
       )}
       {step === 4 && (
+        <StepBrief
+          mode="groups"
+          sourceId={source?.source_id ?? null}
+          name={name} setName={setName}
+          scenario={scenario} setScenario={setScenario}
+          brief={brief} setBrief={setBrief}
+          edit={edit} setEdit={setEdit}
+          agents={agents} maxGroups={Math.max(3, Math.min(20, Math.floor(agents / 2)))}
+          busy={busy}
+          onError={onError}
+          onGenerate={handleBrief}
+          onBack={() => setStep(3)}
+          onNext={() => setStep(5)}
+        />
+      )}
+      {step === 5 && (
+        <StepPopulation
+          agents={agents} setAgents={setAgents}
+          ticks={ticks} setTicks={setTicks}
+          mix={mix} setMix={setMix}
+          brief={brief}
+          preset={preset} applyPreset={applyPreset}
+          onBack={() => setStep(4)}
+          onNext={() => setStep(6)}
+        />
+      )}
+      {step === 6 && (
+        <StepSettings
+          writesPerTick={writesPerTick} setWritesPerTick={setWritesPerTick}
+          seed={seed} setSeed={setSeed}
+          est={est}
+          onBack={() => setStep(5)}
+          onNext={() => setStep(7)}
+        />
+      )}
+      {step === 7 && (
         <StepRun
+          mode="review"
           source={source}
           name={name} setName={setName}
           scenario={scenario}
@@ -343,7 +401,26 @@ export default function Wizard({ onDone, onCancel, onError, initialSource }: {
           mix={mix}
           est={est}
           busy={busy}
-          onBack={() => setStep(3)}
+          onBack={() => setStep(6)}
+          onLaunch={launch}
+          onNext={() => setStep(8)}
+        />
+      )}
+      {step === 8 && (
+        <StepRun
+          mode="launch"
+          source={source}
+          name={name} setName={setName}
+          scenario={scenario}
+          brief={brief}
+          agents={agents}
+          ticks={ticks}
+          writesPerTick={writesPerTick}
+          seed={seed}
+          mix={mix}
+          est={est}
+          busy={busy}
+          onBack={() => setStep(7)}
           onLaunch={launch}
         />
       )}
@@ -513,8 +590,9 @@ function StepSource({ source, busy, onUpload, onChoose, onNext }: {
   );
 }
 
-function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setBrief, edit, setEdit,
-  busy, onError, onGenerate, onBack, onNext }: {
+function StepBrief({ mode, sourceId, name, setName, scenario, setScenario, brief, setBrief,
+  edit, setEdit, agents, maxGroups, busy, onError, onGenerate, onBack, onNext }: {
+  mode: "question" | "issues" | "groups";
   sourceId: string | null;
   name: string;
   setName: (s: string) => void;
@@ -524,6 +602,8 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
   setBrief: (b: WorldBrief) => void;
   edit: WorldBrief | null;
   setEdit: Dispatch<SetStateAction<WorldBrief | null>>;
+  agents: number;
+  maxGroups: number;
   busy: boolean;
   onError: (e: unknown) => void;
   onGenerate: () => void;
@@ -531,12 +611,41 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
   onNext: () => void;
 }) {
   const canGen = scenario.trim().length > 0;
-  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"issues" | "groups">("issues");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const draftQuestion = brief
     ? `How will the people affected respond to ${brief.issues.map((i) => i.name).join(" and ")}?`
     : "";
+
+  // One-click issue starters. They only seed name/category/labels — the user can
+  // then edit anything. Choosing one must never overwrite an issue already typed.
+  const ISSUE_PRESETS = [
+    { name: "Policy", category: "policy.infrastructure" },
+    { name: "Economy", category: "policy.taxation" },
+    { name: "Environment", category: "policy.environment" },
+    { name: "Public opinion", category: "society.public_opinion" },
+    { name: "Infrastructure", category: "policy.infrastructure" },
+    { name: "Technology", category: "policy.digital" },
+    { name: "Employment", category: "policy.employment" },
+    { name: "Healthcare", category: "policy.healthcare" },
+    { name: "Education", category: "policy.education" },
+    { name: "Regulation", category: "business.regulation" },
+    { name: "Consumer behaviour", category: "business.consumer_behaviour" },
+    { name: "Community impact", category: "society.community_conflict" },
+    { name: "Equity", category: "society.inequality" },
+    { name: "Safety", category: "policy.public_safety" },
+    { name: "Cost", category: "business.pricing" },
+    { name: "Implementation", category: "policy.urban_planning" },
+    { name: "Trust", category: "society.public_opinion" },
+    { name: "Political response", category: "policy.welfare" },
+  ];
+
+  const GROUP_PRESETS = [
+    "Residents", "Consumers", "Businesses", "Government", "Local government",
+    "Regulators", "Industry", "Workers", "Students", "Researchers", "NGOs",
+    "Media", "Investors", "Activists", "Experts", "Community organizations",
+    "Taxpayers", "Tourists", "Transport users", "Healthcare providers", "Educators",
+  ];
 
   // Issue Categories
   const ISSUE_CATEGORIES: { value: string; label: string }[] = [
@@ -682,19 +791,81 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
   async function save(): Promise<boolean> {
     if (!sourceId || !edit) return false;
     setSaving(true);
+    setSaveState("saving");
     onError(null);
     try {
       const r = await api.updateBrief(sourceId, edit);
       setBrief(r.brief);
       setEdit(r.brief);
-      setEditing(false);
+      setSaveState("saved");
       return true;
     } catch (e) {
       onError(e);
+      setSaveState("error");
       return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  function addPresetIssue(preset: { name: string; category: string }) {
+    if (!edit) return;
+    setEdit({
+      ...edit,
+      issues: [...edit.issues, {
+        id: `iss_${edit.issues.length + 1}`,
+        name: preset.name,
+        question: "",
+        pro_label: "Supports",
+        con_label: "Opposes",
+        evidence_chunk_ids: [],
+        category: preset.category,
+        detailed_context: "",
+        geographic_scope: "",
+        time_horizon: "",
+        current_situation: "",
+        proposed_change: "",
+        alternative_options: "",
+        key_tradeoffs: "",
+        evidence_sources: "",
+        known_uncertainties: "",
+        metrics: "",
+        decision_question: "",
+      }],
+    });
+    setSaveState("idle");
+  }
+
+  function addPresetGroup(name: string) {
+    if (!edit) return;
+    const issues = edit.issues;
+    setEdit({
+      ...edit,
+      stakeholder_groups: [...edit.stakeholder_groups, {
+        name,
+        description: "",
+        size_hint: "medium" as const,
+        population_weight: undefined,
+        demographic_characteristics: "",
+        geographic_distribution: "",
+        economic_characteristics: "",
+        interests: [],
+        priorities: [],
+        concerns: [],
+        incentives: "",
+        constraints: "",
+        typical_information_sources: [],
+        initial_stance: 0,
+        stance_distribution: "",
+        influence: 1,
+        sensitivity: 1,
+        trust_level: 0.5,
+        institutional_power: 1,
+        behavioural_tendencies: "",
+        stance_by_issue: Object.fromEntries(issues.map((iss) => [iss.id, 0])),
+      }],
+    });
+    setSaveState("idle");
   }
 
   // Calculate population representation for display
@@ -728,156 +899,183 @@ function StepBrief({ sourceId, name, setName, scenario, setScenario, brief, setB
     <div className="panel panel-body">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="t-h2">Scenario</h2>
-          <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 620 }}>
-            Name the simulation and pose the question. Define the issues and stakeholder groups with
-            categories, population weights, and detailed attributes. The model reads the document
-            and drafts a brief; edit it here before continuing.
+          <h2 className="t-h2">
+            {mode === "question" ? "Research question"
+              : mode === "issues" ? "Issues"
+                : "Stakeholder groups"}
+          </h2>
+          <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 640 }}>
+            {mode === "question" ? (
+              <>Name the simulation and state what you want to learn. The model reads the
+                document and drafts the issues and stakeholder groups from it — you review
+                and edit them on the next two steps.</>
+            ) : mode === "issues" ? (
+              <>Every issue the population cares about. Add as many as you need — nothing is
+                truncated. Agents hold a separate stance on each issue.</>
+            ) : (
+              <>Who is affected, and how they differ. Each group gets its own stance on every
+                issue plus its own influence, exposure and concerns.</>
+            )}
           </p>
         </div>
         <GeneratedTag title="The scenario brief is drafted by the configured model from this source" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <label className="field">
-          <span className="label">Simulation name</span>
-          <input
-            className="input"
-            placeholder="e.g. Congestion Charge — Public Response"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-        </label>
-      </div>
-      <label className="field mt-4">
-        <span className="label">Scenario question</span>
-        <textarea
-          className="input"
-          placeholder={'e.g. "How will our town react if the council approves the wind project next quarter?"'}
-          value={scenario}
-          onChange={(e) => setScenario(e.target.value)}
-        />
-      </label>
-      {!scenario.trim() && brief && (
-        <button className="btn btn-ghost btn-sm mt-2" onClick={() => setScenario(draftQuestion)}>
-          Use a draft question from the brief
-        </button>
-      )}
-
-      <div className="mt-3 flex items-center gap-3">
-        <button className="btn btn-primary" onClick={onGenerate} disabled={!canGen || busy}>
-          <Wand2 size={15} /> {brief ? "Regenerate scenario" : "Draft the scenario"}
-        </button>
-        {busy && <Spinner label="The model is reading your document…" />}
+      {/* Save state is shown explicitly — never claim a save that did not happen. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className={`status ${saveState === "saved" ? "status-ok" : saveState === "error" ? "status-err" : saveState === "saving" ? "status-queued" : "status-idle"}`}>
+          <span className={`dot${saveState === "saving" ? " dot-pulse" : ""}`} />
+          {saveState === "saved" ? "Saved to source"
+            : saveState === "saving" ? "Saving…"
+              : saveState === "error" ? "Save failed"
+                : "Draft autosaved in this browser"}
+        </span>
+        <span className="t-meta">
+          {brief ? `${(edit ?? brief).issues.length} issues · ${(edit ?? brief).stakeholder_groups.length} groups` : "No brief yet"}
+        </span>
       </div>
 
-      {/* Issue / Group Tabs when brief exists */}
-      {brief && (
-        <div className="mt-6">
-          <div className="flex flex-wrap gap-2 mb-4">
-            <button
-              className={`btn ${activeTab === "issues" ? "btn-accent" : "btn-ghost"}`}
-              onClick={() => setActiveTab("issues")}
-            >
-              Issues ({edit?.issues.length ?? brief.issues.length})
-            </button>
-            <button
-              className={`btn ${activeTab === "groups" ? "btn-accent" : "btn-ghost"}`}
-              onClick={() => setActiveTab("groups")}
-            >
-              Stakeholder Groups ({edit?.stakeholder_groups.length ?? brief.stakeholder_groups.length})
-            </button>
-            {!editing && (
-              <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(brief); setEditing(true); }}>
-                Edit all
-              </button>
-            )}
+      {mode === "question" && (
+        <>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="field">
+              <span className="label">Simulation name</span>
+              <input
+                className="input"
+                placeholder="e.g. Congestion Charge — Public Response"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+              />
+            </label>
           </div>
-
-          {activeTab === "issues" && (
-            <IssueBuilder
-              edit={edit}
-              brief={brief}
-              sourceId={sourceId}
-              busy={busy}
-              onError={onError}
-              onPatch={patchIssue}
-              onAdd={addIssue}
-              onRemove={removeIssue}
-              onDuplicate={duplicateIssue}
-              onMove={moveIssue}
-              categories={ISSUE_CATEGORIES}
+          <label className="field mt-4">
+            <span className="label">Research question</span>
+            <textarea
+              className="input"
+              placeholder={'e.g. "How will our town react if the council approves the wind project next quarter?"'}
+              value={scenario}
+              onChange={(e) => setScenario(e.target.value)}
             />
+            <span className="hint">
+              One clear question. This steers which parts of the document the model reads.
+            </span>
+          </label>
+          {!scenario.trim() && brief && (
+            <button className="btn btn-ghost btn-sm mt-2" onClick={() => setScenario(draftQuestion)}>
+              Use a draft question from the brief
+            </button>
           )}
 
-          {activeTab === "groups" && (
-            <StakeholderGroupBuilder
-              edit={edit}
-              brief={brief}
-              populationData={populationData}
-              busy={busy}
-              onError={onError}
-              onPatch={patchGroup}
-              onAdd={addGroup}
-              onRemove={removeGroup}
-              onDuplicate={duplicateGroup}
-            />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button className="btn btn-primary" onClick={onGenerate} disabled={!canGen || busy}>
+              <Wand2 size={15} /> {brief ? "Regenerate brief" : "Draft the brief"}
+            </button>
+            {busy && <Spinner label="The model is reading your document…" />}
+          </div>
+        </>
+      )}
+
+      {mode === "issues" && brief && (
+        <div className="mt-2 flex flex-col gap-3">
+          {!edit && (
+            <div className="banner banner-warn">
+              <span>
+                The brief is generated. Reload or re-draft if the issue list is empty, then edit below.
+              </span>
+            </div>
+          )}
+          {edit && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="eyebrow">Quick add</span>
+                {ISSUE_PRESETS.map((p) => (
+                  <button key={p.name} className="chip" onClick={() => addPresetIssue(p)} disabled={busy}
+                          title={`Add "${p.name}" as an issue`}>
+                    + {p.name}
+                  </button>
+                ))}
+              </div>
+              <IssueBuilder
+                edit={edit}
+                brief={brief}
+                sourceId={sourceId}
+                busy={busy}
+                onError={onError}
+                onPatch={patchIssue}
+                onAdd={addIssue}
+                onRemove={removeIssue}
+                onDuplicate={duplicateIssue}
+                onMove={moveIssue}
+                categories={ISSUE_CATEGORIES}
+              />
+            </>
           )}
         </div>
       )}
 
-      {brief && editing && edit && (
-        <div className="mt-6 flex flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="eyebrow">Edit scenario brief</span>
-              <GeneratedTag />
+      {mode === "groups" && brief && (
+        <div className="mt-2 flex flex-col gap-3">
+          {!edit && (
+            <div className="banner banner-warn">
+              <span>
+                The brief is generated. Reload or re-draft if the group list is empty, then edit below.
+              </span>
             </div>
-            <span className="t-meta">Stored on the source; reused by later simulations.</span>
-          </div>
-          {edit.issues.map((iss, i) => (
-            <div key={iss.id} className="panel-2 flex flex-col gap-2 p-3.5">
-              <div className="flex items-center gap-2"><span className="t-id">{iss.id}</span><span className="t-meta">issue</span></div>
-              <label className="field"><span className="label">Name</span>
-                <input className="input" value={iss.name}
-                       onChange={(e) => patchIssue(i, { name: e.target.value })} />
-              </label>
-              <label className="field"><span className="label">Question</span>
-                <textarea className="input" style={{ minHeight: 64 }} value={iss.question}
-                          onChange={(e) => patchIssue(i, { question: e.target.value })} />
-              </label>
-            </div>
-          ))}
-          {edit.stakeholder_groups.map((g, i) => (
-            <div key={i} className="panel-2 flex flex-col gap-2 p-3.5">
-              <span className="t-meta">stakeholder group</span>
-              <label className="field"><span className="label">Name</span>
-                <input className="input" value={g.name}
-                       onChange={(e) => patchGroup(i, { name: e.target.value })} />
-              </label>
-              <label className="field"><span className="label">Description</span>
-                <input className="input" value={g.description}
-                       onChange={(e) => patchGroup(i, { description: e.target.value })} />
-              </label>
-            </div>
-          ))}
-          <div className="flex flex-wrap gap-2">
-            <button className="btn btn-primary" onClick={save} disabled={saving || !sourceId}>
-              {saving ? "Saving…" : "Save scenario brief"}
-            </button>
-            <button className="btn btn-ghost" onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
-          </div>
+          )}
+          {edit && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="eyebrow">Quick add</span>
+                {GROUP_PRESETS.map((g) => (
+                  <button key={g} className="chip" onClick={() => addPresetGroup(g)} disabled={busy}
+                          title={`Add "${g}" as a stakeholder group`}>
+                    + {g}
+                  </button>
+                ))}
+              </div>
+              {edit.stakeholder_groups.length > maxGroups && (
+                <div className="banner banner-warn" role="status">
+                  <span>
+                    {edit.stakeholder_groups.length} groups configured but only {agents} agents are
+                    planned. Groups beyond the agent count cannot each receive an agent — raise the
+                    population on the next step, or the seeding step will report which groups were
+                    left out.
+                  </span>
+                </div>
+              )}
+              <StakeholderGroupBuilder
+                edit={edit}
+                brief={brief}
+                populationData={populationData}
+                busy={busy}
+                onError={onError}
+                onPatch={patchGroup}
+                onAdd={addGroup}
+                onRemove={removeGroup}
+                onDuplicate={duplicateGroup}
+              />
+            </>
+          )}
         </div>
       )}
 
-      {!brief && !editing && (
-        <p className="t-meta mt-4">
-          Generate a scenario brief first, then define issues and stakeholder groups in detail.
-        </p>
+      {!brief && (
+        <div className="banner banner-info mt-4" role="status">
+          <span>
+            {mode === "question"
+              ? "Draft the brief to generate an initial issue and stakeholder list."
+              : "No brief yet — go back to Research question and draft it first."}
+          </span>
+        </div>
       )}
 
-      <Nav onBack={onBack} nextLabel="Set up agents" onNext={brief ? handleNext : undefined} busy={busy || saving} />
+      <Nav
+        onBack={onBack}
+        nextLabel={mode === "question" ? "Review issues" : mode === "issues" ? "Review stakeholders" : "Set up the population"}
+        onNext={brief ? handleNext : undefined}
+        busy={busy || saving}
+      />
     </div>
   );
 }
@@ -1153,25 +1351,25 @@ function EvidenceChips({ sourceId, ids }: { sourceId: string; ids: string[] }) {
   );
 }
 
-function StepAgents(p: {
+function StepPopulation(p: {
   agents: number; setAgents: (n: number) => void;
   ticks: number; setTicks: (n: number) => void;
-  writesPerTick: number; setWritesPerTick: (n: number) => void;
-  seed: number; setSeed: (n: number) => void;
   mix: { pro: number; con: number; neu: number };
   setMix: (m: { pro: number; con: number; neu: number }) => void;
   brief: WorldBrief | null;
-  est: EstimateResponse | null;
   preset: string;
   applyPreset: (name: string) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
+  const groupCount = p.brief?.stakeholder_groups.length ?? 0;
+  const shortfall = groupCount > 0 && p.agents < groupCount;
   return (
     <div className="panel panel-body">
-      <h2 className="t-h2">Agents</h2>
-      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 560 }}>
-        Population, run length and how many agents post per round. The seed fixes the population structure and deterministic choices; model-written text can still vary.
+      <h2 className="t-h2">Population</h2>
+      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 620 }}>
+        How many simulated people take part, and how long the world runs. Every configured
+        stakeholder group receives at least one agent when the population is large enough.
       </p>
 
       <div className="mb-5 flex flex-wrap gap-2">
@@ -1194,30 +1392,29 @@ function StepAgents(p: {
           <span className="label">Agents <span className="opt mono">{p.agents}</span></span>
           <input type="range" min={5} max={500} value={p.agents}
                  onChange={(e) => p.setAgents(+e.target.value)} className="w-full" />
+          <span className="hint">
+            {groupCount
+              ? `${groupCount} configured group(s); one agent each needs at least ${groupCount}.`
+              : "Each agent is one simulated person."}
+          </span>
         </label>
         <label className="field">
           <span className="label">Rounds <span className="opt mono">{p.ticks}</span></span>
           <input type="range" min={1} max={500} value={p.ticks}
                  onChange={(e) => p.setTicks(+e.target.value)} className="w-full" />
+          <span className="hint">One round is one cycle of reading, reacting and posting.</span>
         </label>
-        <label className="field">
-          <span className="label">Writes per round <span className="opt mono">{p.writesPerTick}</span></span>
-          <input type="range" min={0} max={20} value={p.writesPerTick}
-                 onChange={(e) => p.setWritesPerTick(+e.target.value)} className="w-full" />
-          <span className="hint">How many agents post each round. 0 = reactions only.</span>
-        </label>
-        <div className="field">
-          <span className="label">Random seed</span>
-          <div className="flex gap-2">
-            <input className="input mono" type="number" value={p.seed}
-                   onChange={(e) => p.setSeed(+e.target.value)} />
-            <button className="btn btn-ghost flex-none" onClick={() => p.setSeed(Math.floor(Math.random() * 2 ** 31))}>
-              Reroll
-            </button>
-          </div>
-          <span className="hint">Same seed → same population structure; provider text can vary.</span>
-        </div>
       </div>
+
+      {shortfall && (
+        <div className="banner banner-warn mt-4" role="status">
+          <span>
+            {groupCount} stakeholder groups but only {p.agents} agents: {groupCount - p.agents}
+            {" "}group(s) will receive no agent. The seeding step reports exactly which ones.
+            Raise the agent count to include every group.
+          </span>
+        </div>
+      )}
 
       <div className="panel-2 mt-5 p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1261,6 +1458,48 @@ function StepAgents(p: {
         </div>
       )}
 
+      <Nav onBack={p.onBack} nextLabel="Simulation settings" onNext={p.onNext} />
+    </div>
+  );
+}
+
+function StepSettings(p: {
+  writesPerTick: number; setWritesPerTick: (n: number) => void;
+  seed: number; setSeed: (n: number) => void;
+  est: EstimateResponse | null;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="panel panel-body">
+      <h2 className="t-h2">Simulation settings</h2>
+      <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 620 }}>
+        How the world moves. Writes control how many agents post each round; the seed fixes the
+        population structure and deterministic choices. Model-written text can still vary.
+      </p>
+
+      <div className="grid gap-5 sm:grid-cols-2">
+        <label className="field">
+          <span className="label">Writes per round <span className="opt mono">{p.writesPerTick}</span></span>
+          <input type="range" min={0} max={20} value={p.writesPerTick}
+                 onChange={(e) => p.setWritesPerTick(+e.target.value)} className="w-full" />
+          <span className="hint">
+            How many agents post each round. 0 = reactions and stance updates only, no new posts.
+          </span>
+        </label>
+        <div className="field">
+          <span className="label">Random seed</span>
+          <div className="flex gap-2">
+            <input className="input mono" type="number" value={p.seed}
+                   onChange={(e) => p.setSeed(+e.target.value)} />
+            <button className="btn btn-ghost flex-none" onClick={() => p.setSeed(Math.floor(Math.random() * 2 ** 31))}>
+              Reroll
+            </button>
+          </div>
+          <span className="hint">Same seed → same population structure; provider text can vary.</span>
+        </div>
+      </div>
+
       {p.est && (
         <div className="panel-2 mt-5 p-4">
           <dl className="kv" style={{ gridTemplateColumns: "150px minmax(0,1fr)", gap: "8px 12px", fontSize: 13 }}>
@@ -1276,12 +1515,14 @@ function StepAgents(p: {
           )}
         </div>
       )}
-      <Nav onBack={p.onBack} nextLabel="Review & launch" onNext={p.onNext} />
+
+      <Nav onBack={p.onBack} nextLabel="Review" onNext={p.onNext} />
     </div>
   );
 }
 
 function StepRun(p: {
+  mode: "review" | "launch";
   source: SourceStats | null;
   name: string;
   setName: (s: string) => void;
@@ -1296,6 +1537,7 @@ function StepRun(p: {
   busy: boolean;
   onBack: () => void;
   onLaunch: () => void;
+  onNext?: () => void;
 }) {
   const missingBrief = !p.brief;
   const [provider, setProvider] = useState<{ name: string; model: string; rpm: number | null } | null>(null);
@@ -1328,10 +1570,17 @@ function StepRun(p: {
 
   return (
     <div className="panel panel-body">
-      <h2 className="t-h2">Review & launch</h2>
+      <h2 className="t-h2">{p.mode === "review" ? "Review" : "Launch"}</h2>
       <p className="t-body fg-2 mt-1 mb-4" style={{ maxWidth: 560 }}>
-        {p.ticks} rounds · ≤ {p.est?.estimate?.max_llm_calls ?? "—"} LLM calls. You can pause or stop
-        at any moment; every round is committed atomically, so a crash never loses a finished round.
+        {p.mode === "review"
+          ? "Check the configuration before starting. Nothing runs until you press Start run."
+          : (
+            <>
+              {p.ticks} rounds · ≤ {p.est?.estimate?.max_llm_calls ?? "—"} LLM calls. You can pause or
+              stop at any moment; every round is committed atomically, so a crash never loses a
+              finished round.
+            </>
+          )}
       </p>
       <dl className="kv m-0" style={{ gridTemplateColumns: "168px minmax(0,1fr)", gap: "10px 16px" }}>
         {summary.map(([k, v]) => (
@@ -1349,13 +1598,40 @@ function StepRun(p: {
           </span>
         </div>
       )}
+      {p.mode === "review" && p.brief && (
+        <div className="panel-2 mt-4 p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="eyebrow">What the population will argue about</span>
+            <span className="t-meta">
+              {p.brief.issues.length} issues · {p.brief.stakeholder_groups.length} groups
+            </span>
+          </div>
+          <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
+            {p.brief.issues.map((i) => (
+              <li key={i.id} className="flex items-baseline gap-2">
+                <span className="t-id">{i.id}</span>
+                <span className="t-body">{i.name}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {p.brief.stakeholder_groups.map((g) => (
+              <span key={g.name} className="chip" style={{ cursor: "default" }}>{g.name}</span>
+            ))}
+          </div>
+        </div>
+      )}
       <p className="t-meta mt-3">
         {provider?.rpm
           ? `At ${provider.rpm} calls/minute, about ${Math.max(1, Math.ceil((p.est?.estimate?.core_calls ?? 0) / provider.rpm))} minutes of provider time.`
           : "Provider time cannot be estimated until a rate is configured."}{" "}
         Cost is unknown for this provider; the call budget is the hard limit.
       </p>
-      <Nav onBack={p.onBack} nextLabel="Start run" onNext={p.onLaunch} busy={p.busy} />
+      {p.mode === "review" ? (
+        <Nav onBack={p.onBack} nextLabel="Continue to launch" onNext={p.onNext} busy={p.busy} />
+      ) : (
+        <Nav onBack={p.onBack} nextLabel="Start run" onNext={p.onLaunch} busy={p.busy} />
+      )}
       {p.busy && <div className="mt-3"><Spinner label="Creating the run…" /></div>}
     </div>
   );
