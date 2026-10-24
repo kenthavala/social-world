@@ -107,6 +107,22 @@ def test_provider_list(client):
     assert {"openrouter", "nvidia_nim", "fcc", "mock"} <= names
 
 
+def test_provider_models_derives_the_free_subset(client, monkeypatch):
+    """The models endpoint must report the free subset it claims, from the adapter's list."""
+    from app.api import providers as providers_api
+
+    async def fake_list(base, key, timeout=25):
+        return ["alpha:free", "beta-large", "gamma-FREE", "delta"]
+
+    monkeypatch.setattr(providers_api.adapters, "list_models", fake_list)
+    r = client.get("/api/providers/mock/models")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["provider"] == "mock"
+    assert body["models"] == ["alpha:free", "beta-large", "gamma-FREE", "delta"]
+    assert body["free_only"] == ["alpha:free", "gamma-FREE"]
+
+
 def test_full_run_flow_mines_sse(client, uploaded_source):
     sid = uploaded_source["source_id"]
     client.post(f"/api/sources/{sid}/brief", json={"scenario": "How will towns react?"})

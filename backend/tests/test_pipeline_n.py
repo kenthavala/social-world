@@ -197,7 +197,7 @@ def _make_run(source_id: str, run_id: str, *, agents: int = 20, ticks: int = 2) 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("n_issues,n_groups", [(2, 3), (5, 6), (10, 10)])
+@pytest.mark.parametrize("n_issues,n_groups", [(2, 3), (5, 6), (10, 10), (10, 15)])
 async def test_full_pipeline_preserves_issues_and_groups(fresh_db, sample_source,
                                                          n_issues, n_groups):
     """BUG A + B: every configured issue and group reaches agents, stances, findings, report."""
