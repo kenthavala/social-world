@@ -1,8 +1,15 @@
 # KNOWN_LIMITS.md — M1 → M3 (vertical slice + product shell + exports/analytics)
 
+0. **No real-world accuracy claim.** The simulation models plausible responses from
+   generated personas. **Predictive accuracy has not yet been externally validated.**
+   The Quality tab computes configuration quality and internal consistency, never
+   prediction accuracy. See `docs/VALIDATION.md` for the full distinction.
+
 1. **Scale is honest, not huge.** Designed for tens of agents and tens of ticks
    (Quick 8 agents / 8 ticks, Standard 24 / 20, Large 40 / 24; configurable to 100).
-   SQLite is local-first by contract, not a cluster DB.
+   SQLite is local-first by contract, not a cluster DB. The API accepts up to 500
+   agents and 500 rounds; beyond the low hundreds the UI becomes the bottleneck
+   before the engine does.
 
 2. **Rule-based feed & reactions.** Activation, p_like/p_repost/follow use
    closed formulas with traits — they are calibrated heuristics, not learned.
@@ -23,9 +30,13 @@
    PDFs are rejected with a clear error; unicode-heavy DOCX layouts may lose
    formatting.
 
-6. **Brief generation lattice** — the brief LLM call returns issues/groups;
-   agents are sampled per group's target stance. Groups smaller than one agent
-   are merged; extreme unlucky splits can skew initial pop_mix slightly.
+6. **Brief generation and group coverage** — the brief call returns issues and
+   groups; seeding apportions agent slots across every group with largest-remainder
+   apportionment, so no configured group is silently dropped. When the population
+   is smaller than the group count, the leftovers are named in a run warning event
+   and the wizard warns before launching. The stance mix still biases individual
+   agents within a group, so a group's sampled mean can differ from its configured
+   target by a few tenths.
 
 7. **No auth / no multi-tenant** — localhost single-user app. Do not expose
    8000 to other devices; .env keys are readable from the same machine.

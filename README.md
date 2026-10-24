@@ -27,6 +27,25 @@ npm run dev
 
 ---
 
+## Scientific honesty
+
+The Social World simulates **plausible responses from modelled agents**. It is not a
+survey, not a forecast, and not a validated predictor of real opinion.
+
+- **Predictive accuracy has not yet been externally validated.** No observed dataset
+  is linked to a run, so no accuracy figure is produced.
+- The Quality tab computes **simulation quality** — how well a run is configured and
+  how internally consistent its recorded data is. That score is *not* accuracy.
+- Source-derived text, simulated posts, counted statistics and generated prose are
+  labelled separately everywhere they appear.
+- Where a metric cannot be computed honestly, the UI shows **Not enough evidence**
+  rather than inventing a number.
+
+See [`docs/VALIDATION.md`](docs/VALIDATION.md) for the dimension-by-dimension
+definitions and the path to adding real external validation.
+
+---
+
 ## Core Concepts
 
 | Concept | Description |
@@ -39,6 +58,23 @@ npm run dev
 | **Post** | Text + stance + emotion + cited chunk IDs + provenance (model/provider/seq/via_fallback). |
 | **Report** | Counted from DB rows: stance landings, turning points, clusters, citations, influencers. |
 | **Essay** | Optional LLM executive summary (separate card, pinned to snapshot, labelled "LLM DRAFT"). |
+
+---
+
+## The Wizard (8 steps)
+
+1. **Source** — upload or pick a document.
+2. **Question** — name the simulation and state the research question.
+3. **Issues** — review and edit the generated issues; add as many as you need.
+4. **Stakeholders** — review and edit stakeholder groups, stances and attributes.
+5. **Population** — agents, rounds and stance mix.
+6. **Settings** — writes per round and the random seed.
+7. **Review** — read the full configuration before committing.
+8. **Launch** — create the run and hand off to the run room.
+
+Nothing is truncated: the number of issues and stakeholder groups is whatever you
+configure. If the population is smaller than the group count, the wizard and the run
+log both say which groups could not be represented.
 
 ---
 
@@ -69,8 +105,9 @@ npm run dev
 
 | File | Purpose |
 |------|---------|
+| `docs/VALIDATION.md` | What realism/quality means, every dimension, and how external validation is added |
 | `docs/DECISIONS.md` | 37 key implementation decisions (opinionated, recorded) |
-| `docs/KNOWN_LIMITS.md` | 18 honest limits (scale, providers, nondeterminism, etc.) |
+| `docs/KNOWN_LIMITS.md` | Honest limits (no accuracy claim, scale, providers, nondeterminism) |
 | `docs/RELEASE_REPORT.md` | This release's verification results and deliverables |
 | `docs/MASTER_BUILD_PROMPT.md` | Original 19-phase implementation specification |
 | `docs/ARCHITECTURE.md` | System architecture overview |
@@ -108,22 +145,55 @@ Keys are written to `.env` and live `os.environ` via `POST /api/settings/keys`. 
 | `GET /api/runs/{id}/compare?other=...` | Counted per-round stance mixes |
 | `POST /api/runs/{id}/report` | Generate deterministic report |
 | `POST /api/runs/{id}/report/essay` | Generate LLM executive summary |
+| `GET /api/runs/{id}/narrative` | Plain-language findings computed from counted rows (no model call) |
+| `GET /api/runs/{id}/realism` | Quality diagnostics: 23 dimensions + improvement actions |
 | `GET /api/sources` | List sources (upload via UI) |
 | `GET /api/settings` | Provider, runtime, keys (booleans), redaction preview |
+
+### Where things live in the UI
+
+| Screen | Route | What it is for |
+|--------|-------|----------------|
+| Home | `#/` | What the product does, what it does not claim, recent work |
+| Simulations | `#/simulations` | The full list, searchable and filterable |
+| Sources | `#/documents` | Upload, extraction status, chunks, brief status |
+| Wizard | `#/new` | The 8-step guided setup |
+| Run room | `#/run/<id>` | Feed, Agents, Connections, Findings, Quality |
+| Settings | `#/settings` | Provider, keys, runtime limits |
 
 ---
 
 ## Testing
 
 ```bash
-# Backend (96 tests)
+# Backend: 123 tests (unit, integration, pipeline regression, narrative, migration)
 cd backend
 python -m pytest tests/ -v
 
-# Frontend build
+# Pipeline regression (issues/groups, quality dimensions, narrative)
+python -m pytest tests/test_pipeline_n.py -v
+
+# End-to-end acceptance through the real HTTP API (74 assertions)
+cd ..
+python tools/e2e_acceptance.py
+
+# Frontend typecheck and production build
 cd frontend
+npx tsc --noEmit
 npm run build
+
+# Visual QA: 41 screenshots at 1920/1440/1280/390 + overflow/console audit
+python ../tools/seed_demo.py ../.demo-data
+# then, with the server running on :8021
+node tools/visual_qa.mjs http://127.0.0.1:8021 run_demo_congestion
 ```
+
+The pipeline tests drive the real code path end to end with the mock provider:
+2/5/10 issues and 3/6/10/15 stakeholder groups are asserted to survive
+brief → database → seeding → agents → stances → findings → report, the Quality
+endpoint is asserted to never fabricate a score for an unassessed dimension, and
+the narrative endpoint is asserted to cover every issue and group without a model
+call.
 
 ---
 
