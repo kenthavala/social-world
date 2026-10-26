@@ -228,14 +228,12 @@ C:\AI\OASIS_SIM\
 
 ## License
 
-MIT — see `LICENSE` (to be added).
+MIT License. See `LICENSE`.
 
 ---
 
 ## Attribution
 
-Built with FastAPI, React 18, Vite, Tailwind, SQLite (WAL), SSE.
+Built with FastAPI, React 18, Vite, Tailwind, SQLite (WAL), and SSE.
 
-Product name: **The Social World** (formerly OASIS_SIM).
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+AI assisted development was used extensively for implementation, testing, debugging, documentation, and iteration. The project is maintained and reviewed by the repository maintainer.
