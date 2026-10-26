@@ -26,3 +26,15 @@ FINAL_REPORT.md
 backend/_repro.py
 backend/_repro_full.py
 backend/test_real_provider.py
+
+# Personal Yuki experiment
+backend/do_yuki.py
+backend/yuki_client.py
+backend/yuki_gate.py
+backend/yuki_probe.py
+backend/yuki_step1.py
+docs/runs/
+
+# Local publication audit artifacts - do not publish
+audit_social_world_publish.md
+security_audit_pass.md
